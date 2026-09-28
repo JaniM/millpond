@@ -1,6 +1,13 @@
-import { createContext, type ReactNode, useContext } from "react";
+import {
+  createContext,
+  type ReactNode,
+  useCallback,
+  useContext,
+  useRef,
+  useSyncExternalStore,
+} from "react";
 import type { AnyDb, OpFn } from "./db";
-import { notImplemented } from "./internal";
+import { internalOf, type QueryInfo, sameResult } from "./internal";
 import type { Op } from "./op";
 import type { Query } from "./query";
 
@@ -26,12 +33,30 @@ export function useDb(): AnyDb {
  * the query every render is free.
  */
 export function useQuery<Row, Result>(query: Query<Row, Result>): Result {
-  void query;
-  return notImplemented("useQuery()");
+  const db = useDb();
+  // Equal queries share a key, so a query rebuilt every render keeps the same
+  // subscription.
+  const key = internalOf<QueryInfo>(query, "query").key;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `key` identifies the query structurally.
+  const subscribe = useCallback((onChange: () => void) => db.subscribe(query, onChange), [db, key]);
+  // Once subscribed, the db caches the result and keeps its identity. Before
+  // that (the first render), reads are fresh, so hold on to the last snapshot
+  // while it is unchanged — useSyncExternalStore requires a stable value.
+  const snapshot = useRef<{ db: AnyDb; key: string; value: Result } | null>(null);
+  const getSnapshot = () => {
+    const value = db.read(query);
+    const last = snapshot.current;
+    if (last !== null && last.db === db && last.key === key && sameResult(last.value, value)) {
+      return last.value;
+    }
+    snapshot.current = { db, key, value };
+    return value;
+  };
+  return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
 }
 
 /** Returns a function, bound to the provider's db, that runs the op. */
 export function useOp<Args>(op: Op<Args>): OpFn<Args> {
-  void op;
-  return notImplemented("useOp()");
+  const db = useDb();
+  return useCallback((args?: Args) => db.run(op, args as Args), [db, op]) as OpFn<Args>;
 }

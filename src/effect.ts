@@ -1,6 +1,6 @@
 import type { ScopeApi } from "./aggregate";
 import type { ReadonlyDb } from "./db";
-import { notImplemented } from "./internal";
+import { type EffectDef, INTERNAL, internalOf } from "./internal";
 import type { Op } from "./op";
 import type { RowOf, Table } from "./table";
 
@@ -36,6 +36,10 @@ export interface Effect {
 export function effect<const Inputs extends readonly Table[]>(
   config: EffectConfig<Inputs>,
 ): Effect {
-  void config;
-  return notImplemented("effect()");
+  for (const input of config.inputs) internalOf(input, "table or aggregate as input");
+  const def: EffectDef = {
+    inputs: [...config.inputs],
+    watch: config.watch as unknown as EffectDef["watch"],
+  };
+  return { kind: "effect", [INTERNAL]: def } as Effect;
 }

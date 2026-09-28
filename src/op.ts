@@ -1,4 +1,4 @@
-import { notImplemented } from "./internal";
+import { INTERNAL, type OpDef } from "./internal";
 import type { Query } from "./query";
 import type { Table } from "./table";
 
@@ -38,6 +38,7 @@ export interface Op<Args = unknown> {
 }
 
 export function op<Args = void>(fn: (tx: Tx, args: Args) => void): Op<Args> {
-  void fn;
-  return notImplemented("op()");
+  if (typeof fn !== "function") throw new TypeError("reactive-db: op() expects a function.");
+  const def: OpDef = { fn: fn as OpDef["fn"] };
+  return { kind: "op", [INTERNAL]: def } as Op<Args>;
 }

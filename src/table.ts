@@ -1,4 +1,11 @@
-import { notImplemented } from "./internal";
+import {
+  INTERNAL,
+  PK_INDEX,
+  type Primitive,
+  type QueryInfo,
+  type Range,
+  type TableDef,
+} from "./internal";
 import type { Query, Step } from "./query";
 import type { InferRow, StandardSchemaV1 } from "./schema";
 
@@ -83,8 +90,125 @@ export function table<
   const Key extends IndexableKeys<InferRow<S>>,
   const Indexes extends IndexMap<InferRow<S>> = Record<never, never>,
 >(schema: S, options: { key: Key; indexes?: Indexes }): TableFor<InferRow<S>, Key, Indexes>;
-export function table(schema: unknown, options: unknown): never {
-  void schema;
-  void options;
-  return notImplemented("table()");
+export function table(
+  schema: StandardSchemaV1,
+  options: { key: string; generate?: () => unknown; indexes?: Record<string, readonly string[]> },
+): unknown {
+  if (typeof schema?.["~standard"]?.validate !== "function") {
+    throw new TypeError("reactive-db: table() expects a Standard Schema.");
+  }
+  if (typeof options?.key !== "string") {
+    throw new TypeError("reactive-db: table() expects a `key` option naming the primary key.");
+  }
+  const indexes = new Map<string, readonly string[]>([[PK_INDEX, [options.key]]]);
+  for (const [name, cols] of Object.entries(options.indexes ?? {})) {
+    if (name === "all" || name === "get" || name === PK_INDEX) {
+      throw new Error(`reactive-db: "${name}" is reserved and cannot name an index.`);
+    }
+    indexes.set(name, [...cols]);
+  }
+  const def: TableDef = {
+    id: nextTableId++,
+    schema,
+    key: options.key,
+    generate: options.generate,
+    indexes,
+    aggregate: undefined,
+  };
+
+  const surface: Record<string | symbol, unknown> = {
+    kind: "table",
+    [INTERNAL]: def,
+    all: () => makeQuery(def, PK_INDEX, [], undefined, false),
+    get: (key: Primitive) => makeQuery(def, PK_INDEX, [key], undefined, true),
+  };
+  for (const name of indexes.keys()) {
+    if (name !== PK_INDEX) surface[name] = makeStep(def, name, []);
+  }
+  return surface;
+}
+
+let nextTableId = 1;
+
+// --- Query builders ----------------------------------------------------------
+
+type Surface = Record<string | symbol, unknown>;
+
+function makeQuery(
+  def: TableDef,
+  index: string,
+  prefix: readonly Primitive[],
+  range: Range | undefined,
+  single: boolean,
+): Surface {
+  const cols = def.indexes.get(index) ?? [];
+  const info: QueryInfo = {
+    table: def,
+    index,
+    cols,
+    prefix,
+    range,
+    single,
+    key: JSON.stringify([
+      def.id,
+      index,
+      single,
+      prefix.map(encode),
+      range && [
+        range.hasLo,
+        encode(range.lo),
+        range.loInc,
+        range.hasHi,
+        encode(range.hi),
+        range.hiInc,
+      ],
+    ]),
+  };
+  return { kind: "query", [INTERNAL]: info };
+}
+
+/** Encodes a value so that values of different types never collide. */
+function encode(v: Primitive): unknown {
+  return v === undefined ? ["u"] : typeof v === "number" ? ["n", String(v)] : v;
+}
+
+/** A step before `prefix.length`'s column: `<col>Eq` plus the comparisons. */
+function makeStep(def: TableDef, index: string, prefix: readonly Primitive[]): Surface {
+  const q = makeQuery(def, index, prefix, undefined, false);
+  const cols = def.indexes.get(index) ?? [];
+  const col = cols[prefix.length];
+  if (col === undefined) return q;
+  q[`${col}Eq`] = (v: Primitive) => makeStep(def, index, [...prefix, v]);
+  const bound = (r: Partial<Range>) => makeRange(def, index, prefix, col, { ...NO_RANGE, ...r });
+  q[`${col}Gt`] = (v: Primitive) => bound({ hasLo: true, lo: v, loInc: false });
+  q[`${col}Gte`] = (v: Primitive) => bound({ hasLo: true, lo: v, loInc: true });
+  q[`${col}Lt`] = (v: Primitive) => bound({ hasHi: true, hi: v, hiInc: false });
+  q[`${col}Lte`] = (v: Primitive) => bound({ hasHi: true, hi: v, hiInc: true });
+  return q;
+}
+
+const NO_RANGE: Range = { hasLo: false, loInc: false, hasHi: false, hiInc: false };
+
+/** A range query; the complementary bound may still be added once. */
+function makeRange(
+  def: TableDef,
+  index: string,
+  prefix: readonly Primitive[],
+  col: string,
+  range: Range,
+): Surface {
+  const q = makeQuery(def, index, prefix, range, false);
+  if (!range.hasHi) {
+    q[`${col}Lt`] = (v: Primitive) =>
+      makeRange(def, index, prefix, col, { ...range, hasHi: true, hi: v, hiInc: false });
+    q[`${col}Lte`] = (v: Primitive) =>
+      makeRange(def, index, prefix, col, { ...range, hasHi: true, hi: v, hiInc: true });
+  }
+  if (!range.hasLo) {
+    q[`${col}Gt`] = (v: Primitive) =>
+      makeRange(def, index, prefix, col, { ...range, hasLo: true, lo: v, loInc: false });
+    q[`${col}Gte`] = (v: Primitive) =>
+      makeRange(def, index, prefix, col, { ...range, hasLo: true, lo: v, loInc: true });
+  }
+  return q;
 }

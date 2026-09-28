@@ -1,4 +1,4 @@
-import { notImplemented } from "./internal";
+import { type AggregateDef, internalOf, type TableDef } from "./internal";
 import type { Query } from "./query";
 import type { RowOf, Table } from "./table";
 
@@ -66,6 +66,14 @@ export interface AggregateConfig<T extends Table, Inputs extends readonly Table[
 export function aggregate<T extends Table, const Inputs extends readonly Table[]>(
   config: AggregateConfig<T, Inputs>,
 ): T {
-  void config;
-  return notImplemented("aggregate()");
+  const def = internalOf<TableDef>(config.table, "table");
+  if (def.aggregate !== undefined) {
+    throw new Error("reactive-db: this table is already the output of another aggregate.");
+  }
+  for (const input of config.inputs) internalOf<TableDef>(input, "table or aggregate as input");
+  def.aggregate = {
+    inputs: [...config.inputs],
+    compute: config.compute as AggregateDef["compute"],
+  };
+  return config.table;
 }

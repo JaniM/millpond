@@ -1,5 +1,5 @@
 import type { Effect } from "./effect";
-import { notImplemented } from "./internal";
+import { type FeatureDef, INTERNAL } from "./internal";
 import type { Op } from "./op";
 import type { Table } from "./table";
 
@@ -34,6 +34,10 @@ export function feature<
   Ops extends Record<string, Op> = Record<string, Op>,
   Effects extends Record<string, Effect> = Record<string, Effect>,
 >(config: FeatureConfig<Tables, Ops, Effects>): Feature<Tables, Ops, Effects> {
-  void config;
-  return notImplemented("feature()");
+  const def: FeatureDef = {
+    tables: { ...config.tables },
+    ops: { ...config.ops },
+    effects: { ...config.effects },
+  };
+  return { kind: "feature", [INTERNAL]: def } as Feature<Tables, Ops, Effects>;
 }
