@@ -1,0 +1,6 @@
+{
+  "//": "Typechecks the test/spec acceptance suite, including its type-level assertions (expectTypeOf, @ts-expect-error). Red until the type layer lands; run with `pnpm typecheck:spec`.",
+  "extends": "./tsconfig.json",
+  "include": ["src", "test"],
+  "exclude": ["node_modules", "dist"]
+}
