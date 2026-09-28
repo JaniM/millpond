@@ -134,7 +134,7 @@ export class TableState {
   read(q: QueryInfo): AnyRow[] | AnyRow | undefined {
     if (q.single) return this.rows.get(q.prefix[0]);
     const idx = this.indexes.get(q.index);
-    if (idx === undefined) throw new Error(`reactive-db: unknown index "${q.index}".`);
+    if (idx === undefined) throw new Error(`millpond: unknown index "${q.index}".`);
     return idx.scan(q);
   }
 }

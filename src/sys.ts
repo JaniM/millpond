@@ -76,7 +76,7 @@ function trusted<Row>(): StandardSchemaV1<Row, Row> {
   return {
     "~standard": {
       version: 1,
-      vendor: "reactive-db",
+      vendor: "millpond",
       validate: (value) => ({ value: value as Row }),
     },
   };

@@ -22,7 +22,7 @@ export function DbProvider({ db, children }: { db: AnyDb; children: ReactNode })
 export function useDb(): AnyDb {
   const db = useContext(DbContext);
   if (db === null) {
-    throw new Error("reactive-db: useDb must be used within a <DbProvider>.");
+    throw new Error("millpond: useDb must be used within a <DbProvider>.");
   }
   return db;
 }

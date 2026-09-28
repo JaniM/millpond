@@ -1,4 +1,4 @@
-# Reactive DB — Design Spec
+# Millpond — Design Spec
 
 Sep 28, 2026 · @Jani Mustonen
 
@@ -328,7 +328,7 @@ Registration mistakes and unregistered tables or ops are covered under Definitio
 A db can describe itself through built-in, read-only system tables. They are queried like any other table, so `read`, `subscribe`, `useQuery`, batching and stable results all apply, and devtools need no separate API.
 
 ```ts
-import { createDb, sys } from "reactive-db";
+import { createDb, sys } from "millpond";
 
 const db = createDb({ features, introspect: true }); // or { history: 50 }
 

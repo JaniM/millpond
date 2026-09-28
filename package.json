@@ -1,5 +1,5 @@
 {
-  "name": "reactive-db",
+  "name": "millpond",
   "version": "0.0.0",
   "description": "An in-memory reactive database for TypeScript — schema'd tables, ops-only writes, incremental aggregates, effects, and subscribable queries.",
   "type": "module",

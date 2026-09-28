@@ -1,4 +1,4 @@
-# reactive-db
+# millpond
 
 > ⚠️ **Status: scaffold.** The public API is fully typed and exported, but the
 > engine is not implemented yet — the factories (`table`, `op`, `aggregate`,
@@ -23,15 +23,15 @@ through a predefined op and every query can be subscribed to.
 ## Install
 
 ```sh
-pnpm add reactive-db
-# React bindings use the optional `reactive-db/react` subpath:
+pnpm add millpond
+# React bindings use the optional `millpond/react` subpath:
 pnpm add react
 ```
 
 ## At a glance
 
 ```ts
-import { createDb, feature, op, table } from "reactive-db";
+import { createDb, feature, op, table } from "millpond";
 import { z } from "zod";
 
 const messages = table(
@@ -54,7 +54,7 @@ db.subscribe(messages.byThread.threadIdEq("t1"), (rows) => render(rows));
 React:
 
 ```tsx
-import { DbProvider, useOp, useQuery } from "reactive-db/react";
+import { DbProvider, useOp, useQuery } from "millpond/react";
 ```
 
 ## Development
@@ -102,7 +102,7 @@ the north star for implementing the engine.
 ```
 src/
   index.ts       # core public API barrel
-  react.tsx      # React bindings (reactive-db/react)
+  react.tsx      # React bindings (millpond/react)
   table.ts op.ts aggregate.ts effect.ts feature.ts db.ts
   query.ts schema.ts reducers.ts internal.ts
 test/            # always-green unit tests (reducers, scaffold contract)

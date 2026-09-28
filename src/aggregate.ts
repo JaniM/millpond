@@ -68,7 +68,7 @@ export function aggregate<T extends Table, const Inputs extends readonly Table[]
 ): T {
   const def = internalOf<TableDef>(config.table, "table");
   if (def.aggregate !== undefined) {
-    throw new Error("reactive-db: this table is already the output of another aggregate.");
+    throw new Error("millpond: this table is already the output of another aggregate.");
   }
   for (const input of config.inputs) internalOf<TableDef>(input, "table or aggregate as input");
   def.aggregate = {

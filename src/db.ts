@@ -109,7 +109,7 @@ const engines = new WeakMap<AnyDb, Engine>();
  */
 export function cachedQueryCount(db: AnyDb): number {
   const engine = engines.get(db);
-  if (engine === undefined) throw new TypeError("reactive-db: not a db created by createDb.");
+  if (engine === undefined) throw new TypeError("millpond: not a db created by createDb.");
   return engine.cachedQueryCount;
 }
 
@@ -218,7 +218,7 @@ class Engine implements ScopeHost {
     const seen = new Set<object>();
     const claim = (value: object, name: string) => {
       if (seen.has(value)) {
-        throw new Error(`reactive-db: ${name} is already registered under another name.`);
+        throw new Error(`millpond: ${name} is already registered under another name.`);
       }
       seen.add(value);
     };
@@ -229,7 +229,7 @@ class Engine implements ScopeHost {
         const sysName = SYS_NAMES.get(def);
         if (sysName !== undefined) {
           throw new Error(
-            `reactive-db: ${sysName} is a system table and cannot be registered as ${fname}.${key}.`,
+            `millpond: ${sysName} is a system table and cannot be registered as ${fname}.${key}.`,
           );
         }
         claim(def, `${fname}.${key}`);
@@ -255,8 +255,8 @@ class Engine implements ScopeHost {
           const sysName = SYS_NAMES.get(def);
           throw new Error(
             sysName === undefined
-              ? `reactive-db: ${name} has an input that is not registered with the db.`
-              : `reactive-db: ${name} reads ${sysName}, which requires createDb({ introspect: true }).`,
+              ? `millpond: ${name} has an input that is not registered with the db.`
+              : `millpond: ${name} reads ${sysName}, which requires createDb({ introspect: true }).`,
           );
         }
         defs.add(def);
@@ -270,7 +270,7 @@ class Engine implements ScopeHost {
       for (const input of inputs) {
         const sysName = SYS_NAMES.get(input);
         if (sysName !== undefined) {
-          throw new Error(`reactive-db: ${name} cannot watch the system table ${sysName}.`);
+          throw new Error(`millpond: ${name} cannot watch the system table ${sysName}.`);
         }
       }
       return inputs;
@@ -292,7 +292,7 @@ class Engine implements ScopeHost {
       if (agg === undefined || state.get(def) === "done") return;
       const ts = this.tables.get(def) as TableState;
       if (state.get(def) === "visiting") {
-        throw new Error(`reactive-db: aggregate ${ts.name} depends on itself.`);
+        throw new Error(`millpond: aggregate ${ts.name} depends on itself.`);
       }
       state.set(def, "visiting");
       const inputs = inputsOf(ts.name, agg.inputs);
@@ -345,7 +345,7 @@ class Engine implements ScopeHost {
   // --- Guards -------------------------------------------------------------------------
 
   private assertAlive(): void {
-    if (this.disposed) throw new Error("reactive-db: the db has been disposed.");
+    if (this.disposed) throw new Error("millpond: the db has been disposed.");
   }
 
   /** The state of a registered table, brought up to date if it's an aggregate. */
@@ -361,12 +361,12 @@ class Engine implements ScopeHost {
     const def = internalOf<TableDef>(table, "table");
     const sysName = SYS_NAMES.get(def);
     if (sysName !== undefined) {
-      throw new Error(`reactive-db: ${sysName} is a system table, which only the db writes.`);
+      throw new Error(`millpond: ${sysName} is a system table, which only the db writes.`);
     }
     const ts = this.tables.get(def);
     if (ts === undefined) throw this.unregistered(def);
     if (def.aggregate !== undefined) {
-      throw new Error(`reactive-db: ${ts.name} is an aggregate, which is read-only.`);
+      throw new Error(`millpond: ${ts.name} is an aggregate, which is read-only.`);
     }
     return ts;
   }
@@ -375,8 +375,8 @@ class Engine implements ScopeHost {
     const sysName = SYS_NAMES.get(def);
     return new Error(
       sysName === undefined
-        ? "reactive-db: this table is not registered with the db."
-        : `reactive-db: reading ${sysName} requires createDb({ introspect: true }).`,
+        ? "millpond: this table is not registered with the db."
+        : `millpond: reading ${sysName} requires createDb({ introspect: true }).`,
     );
   }
 
@@ -403,14 +403,14 @@ class Engine implements ScopeHost {
       try {
         res = ts.def.schema["~standard"].validate(row);
       } catch (e) {
-        throw new Error(`reactive-db: ${ts.name}: the schema failed to validate synchronously.`, {
+        throw new Error(`millpond: ${ts.name}: the schema failed to validate synchronously.`, {
           cause: e,
         });
       }
       if (isThenable(res)) {
         (res as Promise<unknown>).then(undefined, () => {});
         throw new Error(
-          `reactive-db: ${ts.name} has an async schema; ops are synchronous, so it cannot be used.`,
+          `millpond: ${ts.name} has an async schema; ops are synchronous, so it cannot be used.`,
         );
       }
       if (res.issues !== undefined) {
@@ -420,11 +420,11 @@ class Engine implements ScopeHost {
             return path ? `${path}: ${i.message}` : i.message;
           })
           .join("; ");
-        throw new Error(`reactive-db: invalid row for ${ts.name}: ${detail}`);
+        throw new Error(`millpond: invalid row for ${ts.name}: ${detail}`);
       }
       if (!deepEqual(res.value, row)) {
         throw new Error(
-          `reactive-db: ${ts.name}: the schema's output differs from its input. Schemas only validate, so defaults and transforms are not supported.`,
+          `millpond: ${ts.name}: the schema's output differs from its input. Schemas only validate, so defaults and transforms are not supported.`,
         );
       }
     }
@@ -522,11 +522,11 @@ class Engine implements ScopeHost {
     this.assertAlive();
     if (this.noWrite > 0) {
       throw new Error(
-        "reactive-db: ops cannot be called from subscribers, compute or watch functions.",
+        "millpond: ops cannot be called from subscribers, compute or watch functions.",
       );
     }
     if (this.tx !== undefined) {
-      throw new Error("reactive-db: use tx.run to call an op from inside another op.");
+      throw new Error("millpond: use tx.run to call an op from inside another op.");
     }
     const reg = this.opOf(op);
     const tx = new Tx(this);
@@ -542,7 +542,7 @@ class Engine implements ScopeHost {
 
   opOf(op: unknown): RegisteredOp {
     const reg = typeof op === "object" && op !== null ? this.ops.get(op) : undefined;
-    if (reg === undefined) throw new Error("reactive-db: this op is not registered with the db.");
+    if (reg === undefined) throw new Error("millpond: this op is not registered with the db.");
     return reg;
   }
 
@@ -682,7 +682,7 @@ class Engine implements ScopeHost {
         this.introspection?.disable(effect.name);
         this.report(
           new Error(
-            `reactive-db: ${effect.name} restarted its tasks in more than ${FLUSH_CAP} consecutive flushes and has been disabled.`,
+            `millpond: ${effect.name} restarted its tasks in more than ${FLUSH_CAP} consecutive flushes and has been disabled.`,
           ),
           effect.name,
         );
@@ -810,7 +810,7 @@ class Tx {
       const r = reg.def.fn(this, args);
       if (isThenable(r)) {
         (r as Promise<unknown>).then(undefined, () => {});
-        throw new Error(`reactive-db: op ${reg.name} returned a promise; ops must be synchronous.`);
+        throw new Error(`millpond: op ${reg.name} returned a promise; ops must be synchronous.`);
       }
     } catch (e) {
       this.rollback(mark);
@@ -828,7 +828,7 @@ class Tx {
   }
 
   private assertOpen(): void {
-    if (this.closed) throw new Error("reactive-db: this transaction has already finished.");
+    if (this.closed) throw new Error("millpond: this transaction has already finished.");
   }
 
   private current(ts: TableState, key: unknown): AnyRow | undefined {
@@ -852,13 +852,13 @@ class Tx {
 
   private withKey(ts: TableState, row: unknown): AnyRow {
     if (typeof row !== "object" || row === null) {
-      throw new TypeError(`reactive-db: ${ts.name}: a row must be an object.`);
+      throw new TypeError(`millpond: ${ts.name}: a row must be an object.`);
     }
     const copy: AnyRow = { ...(row as AnyRow) };
     const { key, generate } = ts.def;
     if (copy[key] === undefined && generate !== undefined) copy[key] = generate();
     if (copy[key] === undefined) {
-      throw new Error(`reactive-db: ${ts.name}: the row is missing its key "${key}".`);
+      throw new Error(`millpond: ${ts.name}: the row is missing its key "${key}".`);
     }
     return copy;
   }
@@ -869,7 +869,7 @@ class Tx {
     const next = this.withKey(ts, row);
     const key = next[ts.def.key];
     if (this.current(ts, key) !== undefined) {
-      throw new Error(`reactive-db: ${ts.name}: a row with key ${fmt(key)} already exists.`);
+      throw new Error(`millpond: ${ts.name}: a row with key ${fmt(key)} already exists.`);
     }
     this.write(ts, key, this.engine.prepare(ts, next));
     return key;
@@ -880,12 +880,12 @@ class Tx {
     const ts = this.engine.writable(table);
     const cur = this.current(ts, key);
     if (cur === undefined) {
-      throw new Error(`reactive-db: ${ts.name}: no row with key ${fmt(key)} to update.`);
+      throw new Error(`millpond: ${ts.name}: no row with key ${fmt(key)} to update.`);
     }
     const p = (typeof patch === "function" ? patch(cur) : patch) as AnyRow | undefined;
     const keyField = ts.def.key;
     if (p != null && Object.hasOwn(p, keyField) && !Object.is(p[keyField], key)) {
-      throw new Error(`reactive-db: ${ts.name}: an update cannot change the key "${keyField}".`);
+      throw new Error(`millpond: ${ts.name}: an update cannot change the key "${keyField}".`);
     }
     this.write(ts, key, this.engine.prepare(ts, { ...cur, ...p }));
   }
@@ -903,7 +903,7 @@ class Tx {
     this.assertOpen();
     const ts = this.engine.writable(table);
     if (this.current(ts, key) === undefined) {
-      throw new Error(`reactive-db: ${ts.name}: no row with key ${fmt(key)} to delete.`);
+      throw new Error(`millpond: ${ts.name}: no row with key ${fmt(key)} to delete.`);
     }
     this.write(ts, key, DELETED);
   }

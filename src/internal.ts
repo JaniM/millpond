@@ -4,7 +4,7 @@ import type { StandardSchemaV1 } from "./schema";
 // public types stay phantom-typed; the data lives behind these symbols.
 
 /** Hidden slot holding a definition's runtime data. */
-export const INTERNAL: unique symbol = Symbol("reactive-db.internal");
+export const INTERNAL: unique symbol = Symbol("millpond.internal");
 
 export type Primitive = string | number | boolean | null | undefined;
 export type AnyRow = Record<string, unknown>;
@@ -72,7 +72,7 @@ export function internalOf<T>(value: unknown, what: string): T {
     value !== null && typeof value === "object"
       ? (value as { [INTERNAL]?: T })[INTERNAL]
       : undefined;
-  if (data === undefined) throw new TypeError(`reactive-db: expected a ${what}.`);
+  if (data === undefined) throw new TypeError(`millpond: expected a ${what}.`);
   return data;
 }
 
@@ -173,9 +173,9 @@ export function isAbortError(e: unknown): boolean {
 
 export function abortError(): Error {
   if (typeof DOMException === "function") {
-    return new DOMException("reactive-db: the task was aborted.", "AbortError");
+    return new DOMException("millpond: the task was aborted.", "AbortError");
   }
-  const err = new Error("reactive-db: the task was aborted.");
+  const err = new Error("millpond: the task was aborted.");
   err.name = "AbortError";
   return err;
 }

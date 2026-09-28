@@ -38,7 +38,7 @@ export interface Op<Args = unknown> {
 }
 
 export function op<Args = void>(fn: (tx: Tx, args: Args) => void): Op<Args> {
-  if (typeof fn !== "function") throw new TypeError("reactive-db: op() expects a function.");
+  if (typeof fn !== "function") throw new TypeError("millpond: op() expects a function.");
   const def: OpDef = { fn: fn as OpDef["fn"] };
   return { kind: "op", [INTERNAL]: def } as Op<Args>;
 }

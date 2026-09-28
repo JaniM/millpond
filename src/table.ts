@@ -95,15 +95,15 @@ export function table(
   options: { key: string; generate?: () => unknown; indexes?: Record<string, readonly string[]> },
 ): unknown {
   if (typeof schema?.["~standard"]?.validate !== "function") {
-    throw new TypeError("reactive-db: table() expects a Standard Schema.");
+    throw new TypeError("millpond: table() expects a Standard Schema.");
   }
   if (typeof options?.key !== "string") {
-    throw new TypeError("reactive-db: table() expects a `key` option naming the primary key.");
+    throw new TypeError("millpond: table() expects a `key` option naming the primary key.");
   }
   const indexes = new Map<string, readonly string[]>([[PK_INDEX, [options.key]]]);
   for (const [name, cols] of Object.entries(options.indexes ?? {})) {
     if (name === "all" || name === "get" || name === PK_INDEX) {
-      throw new Error(`reactive-db: "${name}" is reserved and cannot name an index.`);
+      throw new Error(`millpond: "${name}" is reserved and cannot name an index.`);
     }
     indexes.set(name, [...cols]);
   }

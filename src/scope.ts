@@ -208,7 +208,7 @@ export abstract class ScopeEngine {
 
   protected requireCurrent(what: string): Scope {
     if (this.current === undefined) {
-      throw new Error(`reactive-db: ${what} can only be called while ${this.name} is running.`);
+      throw new Error(`millpond: ${what} can only be called while ${this.name} is running.`);
     }
     return this.current;
   }
@@ -454,7 +454,7 @@ export abstract class ScopeEngine {
     const q = internalOf<QueryInfo>(query, "query");
     if (!this.inputs.has(q.table)) {
       throw new Error(
-        `reactive-db: ${this.name} called ${what} on a table that is not one of its declared inputs.`,
+        `millpond: ${this.name} called ${what} on a table that is not one of its declared inputs.`,
       );
     }
     return q;
@@ -470,10 +470,10 @@ export abstract class ScopeEngine {
     const scope = this.requireCurrent(`q.${kind}`);
     const q = this.checkInput(query, `q.${kind}`);
     if (kind === "each" && typeof fn !== "function") {
-      throw new TypeError("reactive-db: q.each expects a function.");
+      throw new TypeError("millpond: q.each expects a function.");
     }
     if (kind === "reduce" && typeof reducer?.init !== "function") {
-      throw new TypeError("reactive-db: q.reduce expects a reducer ({ init, add, remove }).");
+      throw new TypeError("millpond: q.reduce expects a reducer ({ init, add, remove }).");
     }
     const old = scope.collections[scope.cursor++];
     let coll: Collection;
@@ -577,7 +577,7 @@ export class AggregateEngine extends ScopeEngine {
     const owner = this.owners.get(key);
     if (owner !== undefined && owner !== scope && !owner.disposed) {
       throw new Error(
-        `reactive-db: ${this.name}: two scopes emitted the key ${JSON.stringify(key)} (${this.pathOf(owner)} and ${this.pathOf(scope)}).`,
+        `millpond: ${this.name}: two scopes emitted the key ${JSON.stringify(key)} (${this.pathOf(owner)} and ${this.pathOf(scope)}).`,
       );
     }
     this.owners.set(key, scope);
@@ -643,9 +643,9 @@ export class EffectEngine extends ScopeEngine {
     super(host, name, inputs);
     this.task = (fn, options) => {
       const scope = this.requireCurrent("task");
-      if (typeof fn !== "function") throw new TypeError("reactive-db: task expects a function.");
+      if (typeof fn !== "function") throw new TypeError("millpond: task expects a function.");
       if (scope.nextTask !== undefined) {
-        throw new Error(`reactive-db: ${this.pathOf(scope)} registered more than one task.`);
+        throw new Error(`millpond: ${this.pathOf(scope)} registered more than one task.`);
       }
       scope.nextTask = { fn, label: options?.label };
     };
