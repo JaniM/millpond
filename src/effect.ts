@@ -12,6 +12,16 @@ export interface TaskContext {
   run<Args>(op: Op<Args>, args: Args, options?: { ignoreAbort?: boolean }): void;
   /** Fires when the task is aborted. */
   signal: AbortSignal;
+  /**
+   * Sets a debugging note on the task's `sys.tasks` row. A no-op without
+   * `createDb({ introspect })`, and after the task has finished.
+   */
+  note(detail: string | null): void;
+}
+
+export interface TaskOptions {
+  /** A human-readable name for introspection; defaults to the scope's path. */
+  label?: string;
 }
 
 /**
@@ -19,7 +29,7 @@ export interface TaskContext {
  * scope (`q.each`/`q.reduce`), so `rerunOn` and abort/restart are governed by
  * that scope, not by `task` itself.
  */
-export type Task = (fn: (ctx: TaskContext) => void | Promise<void>) => void;
+export type Task = (fn: (ctx: TaskContext) => void | Promise<void>, options?: TaskOptions) => void;
 
 export interface EffectConfig<Inputs extends readonly Table[]> {
   /** Every table and aggregate `watch` may read. */

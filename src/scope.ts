@@ -1,6 +1,7 @@
 import type { Reducer } from "./aggregate";
 import { type AnyRow, internalOf, matchesQuery, type QueryInfo, type TableDef } from "./internal";
 import { Registry } from "./store";
+import type { AbortReason } from "./sys";
 
 // The scope tree behind aggregates and effects. A scope runs a function,
 // records what it read, and owns the collections (`q.each`/`q.reduce`) it
@@ -55,7 +56,7 @@ export class Scope {
   nextReads = new Map<string, ReadWatch>();
 
   // Effect state: the task registered in the current run, and the live one.
-  nextTask: ((ctx: unknown) => unknown) | undefined;
+  nextTask: { fn: (ctx: unknown) => unknown; label: string | undefined } | undefined;
   task: TaskHandle | undefined;
 
   constructor(
@@ -96,8 +97,15 @@ export class Collection {
 export interface TaskHandle {
   readonly fn: (ctx: unknown) => unknown;
   readonly scope: Scope;
+  readonly label: string | undefined;
+  /** The run this one replaced, for introspection: its id, or its own `restartOf`. */
+  readonly restartOf: number | null;
+  /** Set when the task starts under introspection. */
+  id: number | undefined;
   controller: AbortController | undefined;
   cancelled: boolean;
+  /** Called once, when a started task is aborted. */
+  onAbort: ((reason: AbortReason) => void) | undefined;
 }
 
 export abstract class ScopeEngine {
@@ -619,22 +627,27 @@ export class EffectEngine extends ScopeEngine {
   /** Consecutive chained flushes in which this effect started tasks. */
   streak = 0;
   starts: TaskHandle[] = [];
-  private readonly task: (fn: (ctx: unknown) => unknown) => void;
+  /** Why disposing a scope aborts its task; the db sets it when disabling the effect. */
+  disposeReason: AbortReason = "scopeDisposed";
+  private readonly task: (fn: (ctx: unknown) => unknown, options?: { label?: string }) => void;
 
   constructor(
     host: ScopeHost,
     name: string,
     inputs: ReadonlySet<TableDef>,
-    private readonly watch: (q: unknown, task: (fn: (ctx: unknown) => unknown) => void) => void,
+    private readonly watch: (
+      q: unknown,
+      task: (fn: (ctx: unknown) => unknown, options?: { label?: string }) => void,
+    ) => void,
   ) {
     super(host, name, inputs);
-    this.task = (fn) => {
+    this.task = (fn, options) => {
       const scope = this.requireCurrent("task");
       if (typeof fn !== "function") throw new TypeError("reactive-db: task expects a function.");
       if (scope.nextTask !== undefined) {
         throw new Error(`reactive-db: ${this.pathOf(scope)} registered more than one task.`);
       }
-      scope.nextTask = fn;
+      scope.nextTask = { fn, label: options?.label };
     };
   }
 
@@ -643,10 +656,20 @@ export class EffectEngine extends ScopeEngine {
   }
 
   protected override afterSuccess(scope: Scope): void {
-    if (scope.task !== undefined) abortTask(scope.task);
+    const prev = scope.task;
+    if (prev !== undefined) abortTask(prev, "restarted");
     scope.task = undefined;
     if (scope.nextTask !== undefined) {
-      scope.task = { fn: scope.nextTask, scope, controller: undefined, cancelled: false };
+      scope.task = {
+        fn: scope.nextTask.fn,
+        scope,
+        label: scope.nextTask.label,
+        restartOf: prev === undefined ? null : (prev.id ?? prev.restartOf),
+        id: undefined,
+        controller: undefined,
+        cancelled: false,
+        onAbort: undefined,
+      };
       this.starts.push(scope.task);
     }
     scope.nextTask = undefined;
@@ -657,7 +680,7 @@ export class EffectEngine extends ScopeEngine {
   }
 
   protected override onDispose(scope: Scope): void {
-    if (scope.task !== undefined) abortTask(scope.task);
+    if (scope.task !== undefined) abortTask(scope.task, this.disposeReason);
     scope.task = undefined;
   }
 
@@ -668,7 +691,9 @@ export class EffectEngine extends ScopeEngine {
   }
 }
 
-export function abortTask(task: TaskHandle): void {
+export function abortTask(task: TaskHandle, reason: AbortReason): void {
+  if (task.cancelled) return;
   task.cancelled = true;
   task.controller?.abort();
+  task.onAbort?.(reason);
 }

@@ -15,6 +15,7 @@ import {
   shallowEqual,
   type TableDef,
 } from "./internal";
+import { Introspection, type TaskRecord } from "./introspect";
 import type { Op } from "./op";
 import type { Query } from "./query";
 import type { StandardSchemaV1 } from "./schema";
@@ -26,6 +27,7 @@ import {
   type TaskHandle,
 } from "./scope";
 import { Registry, TableState } from "./store";
+import { SYS_NAMES } from "./sys";
 
 /** A read-only view of the db, as seen from tasks and outside code. */
 export interface ReadonlyDb {
@@ -76,6 +78,11 @@ export interface CreateDbOptions<Features extends Record<string, Feature>> {
   validate?: boolean;
   /** Shallow-freeze every stored row. On by default. */
   freeze?: boolean;
+  /**
+   * Maintain the `sys.*` system tables. Off by default. `history` is how many
+   * finished task runs to keep per effect (20 by default).
+   */
+  introspect?: boolean | { history?: number };
   /** Runs after the flush; may call ops, e.g. to record the error. */
   onError?: (err: unknown, info: ErrorInfo<Features>) => void;
 }
@@ -110,6 +117,9 @@ export function cachedQueryCount(db: AnyDb): number {
 
 /** Consecutive flushes in which an effect may restart its tasks. */
 const FLUSH_CAP = 100;
+
+/** Finished task runs kept per effect in `sys.tasks` by default. */
+const DEFAULT_HISTORY = 20;
 
 const DELETED: unique symbol = Symbol("deleted");
 type Slot = AnyRow | typeof DELETED;
@@ -153,6 +163,7 @@ class Engine implements ScopeHost {
   private readonly aggregateOf = new Map<TableDef, AggregateEngine>();
   private readonly effects: EffectEngine[] = [];
   private readonly dependents = new Map<TableDef, ScopeEngine[]>();
+  private readonly introspection: Introspection | undefined;
 
   private readonly cache = new Map<string, CacheEntry>();
   get cachedQueryCount(): number {
@@ -173,6 +184,18 @@ class Engine implements ScopeHost {
     this.validate = options.validate ?? true;
     this.freeze = options.freeze ?? true;
     this.onError = options.onError as typeof this.onError;
+    const { introspect } = options;
+    if (introspect) {
+      const history = typeof introspect === "object" ? introspect.history : undefined;
+      for (const [def, name] of SYS_NAMES) this.tables.set(def, new TableState(def, name));
+      this.introspection = new Introspection(
+        {
+          stateOf: (def) => this.tables.get(def) as TableState,
+          write: (ts, key, row) => this.writeSystem(ts, key, row),
+        },
+        history ?? DEFAULT_HISTORY,
+      );
+    }
     this.register(options.features ?? {});
     const readonlyDb: ReadonlyDb = { read: (q) => this.read(q) };
     this.readonlyDb = readonlyDb;
@@ -191,6 +214,7 @@ class Engine implements ScopeHost {
 
   private register(features: Record<string, Feature>): void {
     const effects: [string, EffectDef, object][] = [];
+    const tableValues: { state: TableState; value: object }[] = [];
     const seen = new Set<object>();
     const claim = (value: object, name: string) => {
       if (seen.has(value)) {
@@ -202,8 +226,16 @@ class Engine implements ScopeHost {
       const fd = internalOf<FeatureDef>(feature, "feature");
       for (const [key, t] of Object.entries(fd.tables)) {
         const def = internalOf<TableDef>(t, "table");
+        const sysName = SYS_NAMES.get(def);
+        if (sysName !== undefined) {
+          throw new Error(
+            `reactive-db: ${sysName} is a system table and cannot be registered as ${fname}.${key}.`,
+          );
+        }
         claim(def, `${fname}.${key}`);
-        this.tables.set(def, new TableState(def, `${fname}.${key}`));
+        const state = new TableState(def, `${fname}.${key}`);
+        this.tables.set(def, state);
+        tableValues.push({ state, value: t });
       }
       for (const [key, o] of Object.entries(fd.ops)) {
         claim(o, `${fname}.${key}`);
@@ -220,12 +252,38 @@ class Engine implements ScopeHost {
       for (const input of inputs) {
         const def = internalOf<TableDef>(input, "table");
         if (!this.tables.has(def)) {
-          throw new Error(`reactive-db: ${name} has an input that is not registered with the db.`);
+          const sysName = SYS_NAMES.get(def);
+          throw new Error(
+            sysName === undefined
+              ? `reactive-db: ${name} has an input that is not registered with the db.`
+              : `reactive-db: ${name} reads ${sysName}, which requires createDb({ introspect: true }).`,
+          );
         }
         defs.add(def);
       }
       return defs;
     };
+
+    // Effects may not watch system tables: a task's own row would restart it.
+    const effectInputs = effects.map(([name, def]) => {
+      const inputs = inputsOf(name, def.inputs);
+      for (const input of inputs) {
+        const sysName = SYS_NAMES.get(input);
+        if (sysName !== undefined) {
+          throw new Error(`reactive-db: ${name} cannot watch the system table ${sysName}.`);
+        }
+      }
+      return inputs;
+    });
+
+    // Filled before aggregates exist, so nothing downstream sees these writes.
+    this.introspection?.init(
+      tableValues,
+      effects.map(([name], i) => ({
+        name,
+        inputs: [...(effectInputs[i] ?? [])].map((d) => this.tables.get(d)?.name ?? ""),
+      })),
+    );
 
     // Aggregates, in dependency order.
     const state = new Map<TableDef, "visiting" | "done">();
@@ -254,8 +312,8 @@ class Engine implements ScopeHost {
     };
     for (const def of this.tables.keys()) visit(def);
 
-    for (const [name, def] of effects) {
-      const engine = new EffectEngine(this, name, inputsOf(name, def.inputs), def.watch);
+    for (const [i, [name, def]] of effects.entries()) {
+      const engine = new EffectEngine(this, name, effectInputs[i] ?? new Set(), def.watch);
       this.effects.push(engine);
       this.addDependent(engine);
     }
@@ -293,7 +351,7 @@ class Engine implements ScopeHost {
   /** The state of a registered table, brought up to date if it's an aggregate. */
   readable(def: TableDef): TableState {
     const ts = this.tables.get(def);
-    if (ts === undefined) throw new Error("reactive-db: this table is not registered with the db.");
+    if (ts === undefined) throw this.unregistered(def);
     const agg = this.aggregateOf.get(def);
     if (agg !== undefined) this.ensureFresh(agg);
     return ts;
@@ -301,12 +359,25 @@ class Engine implements ScopeHost {
 
   writable(table: unknown): TableState {
     const def = internalOf<TableDef>(table, "table");
+    const sysName = SYS_NAMES.get(def);
+    if (sysName !== undefined) {
+      throw new Error(`reactive-db: ${sysName} is a system table, which only the db writes.`);
+    }
     const ts = this.tables.get(def);
-    if (ts === undefined) throw new Error("reactive-db: this table is not registered with the db.");
+    if (ts === undefined) throw this.unregistered(def);
     if (def.aggregate !== undefined) {
       throw new Error(`reactive-db: ${ts.name} is an aggregate, which is read-only.`);
     }
     return ts;
+  }
+
+  private unregistered(def: TableDef): Error {
+    const sysName = SYS_NAMES.get(def);
+    return new Error(
+      sysName === undefined
+        ? "reactive-db: this table is not registered with the db."
+        : `reactive-db: reading ${sysName} requires createDb({ introspect: true }).`,
+    );
   }
 
   private ensureFresh(agg: AggregateEngine): void {
@@ -508,6 +579,21 @@ class Engine implements ScopeHost {
     if (!this.inFlush) this.scheduleFlush(false);
   }
 
+  /** Writes one system row on the db's behalf, outside any op. */
+  private writeSystem(ts: TableState, key: unknown, row: AnyRow | undefined): void {
+    if (this.disposed) return;
+    const before = ts.rows.get(key);
+    if (row === undefined) {
+      if (before === undefined) return;
+      ts.delete(key);
+    } else {
+      if (this.freeze) Object.freeze(row);
+      ts.set(key, row);
+    }
+    this.recordChange(ts, key, before, row);
+    this.scheduleFlush(false);
+  }
+
   private recordChange(
     ts: TableState,
     key: unknown,
@@ -591,7 +677,9 @@ class Engine implements ScopeHost {
       effect.streak = chained ? effect.streak + 1 : 1;
       if (effect.streak > FLUSH_CAP) {
         effect.disabled = true;
+        effect.disposeReason = "effectDisabled";
         effect.dispose();
+        this.introspection?.disable(effect.name);
         this.report(
           new Error(
             `reactive-db: ${effect.name} restarted its tasks in more than ${FLUSH_CAP} consecutive flushes and has been disabled.`,
@@ -613,6 +701,14 @@ class Engine implements ScopeHost {
     task.controller = controller;
     const { signal } = controller;
     const source = effect.pathOf(task.scope);
+    const insp = this.introspection;
+    let record: TaskRecord | undefined;
+    if (insp !== undefined) {
+      const rec = insp.start(effect.name, source, task.label, task.restartOf);
+      record = rec;
+      task.id = rec.id;
+      task.onAbort = (reason) => insp.aborted(rec, reason);
+    }
     const ctx = {
       db: this.readonlyDb,
       signal,
@@ -620,13 +716,24 @@ class Engine implements ScopeHost {
         if (signal.aborted && !opts?.ignoreAbort) throw abortError();
         this.run(op, args);
       },
+      note: (detail: string | null) => {
+        if (record !== undefined) insp?.note(record, detail);
+      },
+    };
+    const done = () => {
+      if (record !== undefined) insp?.end(record, "done");
     };
     const fail = (e: unknown) => {
+      if (record !== undefined) {
+        if (isAbortError(e)) insp?.end(record, "aborted");
+        else insp?.end(record, "failed", e);
+      }
       if (!isAbortError(e) && !this.disposed) this.report(e, source);
     };
     try {
       const r = task.fn(ctx);
-      if (isThenable(r)) r.then(undefined, fail);
+      if (isThenable(r)) r.then(done, fail);
+      else done();
     } catch (e) {
       fail(e);
     }

@@ -17,6 +17,8 @@ through a predefined op and every query can be subscribed to.
   take the place of joins.
 - **Effects** run async tasks, one per row of a query, and write back only by
   calling ops.
+- **Introspection** (opt-in) exposes the db's own tables, effects and task runs
+  as read-only `sys.*` tables you query like any other.
 
 ## Install
 
@@ -70,6 +72,13 @@ pnpm check          # lint + format + organize imports (biome, writes)
 pnpm verify         # biome ci + typecheck + test + build
 pnpm verify:package # publint + are-the-types-wrong
 ```
+
+### Demo
+
+`pnpm demo` starts a Vite dev server for `demo/`, a chat app built on the
+library (imported straight from `src/`). The left column holds chatrooms; the
+right shows each effect's tasks and every registered table's live contents,
+read from the `sys.*` introspection tables.
 
 ### Spec acceptance suite
 

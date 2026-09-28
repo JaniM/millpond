@@ -30,7 +30,10 @@ export interface AggregateDef {
 
 export interface EffectDef {
   readonly inputs: readonly object[];
-  readonly watch: (q: unknown, task: (fn: (ctx: unknown) => unknown) => void) => void;
+  readonly watch: (
+    q: unknown,
+    task: (fn: (ctx: unknown) => unknown, options?: { label?: string }) => void,
+  ) => void;
 }
 
 export interface OpDef {

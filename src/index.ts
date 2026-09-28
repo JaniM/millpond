@@ -11,7 +11,7 @@ export type {
   Unsubscribe,
 } from "./db";
 export { createDb } from "./db";
-export type { Effect, EffectConfig, Task, TaskContext } from "./effect";
+export type { Effect, EffectConfig, Task, TaskContext, TaskOptions } from "./effect";
 export { effect } from "./effect";
 export type { Feature, FeatureConfig } from "./feature";
 export { feature } from "./feature";
@@ -20,6 +20,15 @@ export { op } from "./op";
 export type { Query, Step } from "./query";
 export { count, max, min, sum } from "./reducers";
 export type { InferRow, Schema, StandardSchemaV1 } from "./schema";
+export type {
+  AbortReason,
+  AnyTable,
+  EffectRow,
+  TableRow,
+  TaskRow,
+  TaskStatus,
+} from "./sys";
+export { sys } from "./sys";
 export type {
   Indexable,
   IndexableKeys,

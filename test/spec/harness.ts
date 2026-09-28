@@ -307,7 +307,7 @@ export function chatWorld() {
      * Assemble a db from a single `chat` feature. Pass `ops` to register extra
      * test-specific ops (they touch the already-registered tables, so this
      * avoids the "same table under two names" error), plus any createDb flags
-     * (`validate`, `freeze`, `onError`). The db is disposed after the test.
+     * (`validate`, `freeze`, `onError`, `introspect`). The db is disposed after the test.
      *
      * Without `onError`, reported errors are rethrown as uncaught exceptions
      * (spec §Errors), which fails the vitest run — so a test that provokes an
@@ -318,6 +318,7 @@ export function chatWorld() {
         ops?: Record<string, Op>;
         validate?: boolean;
         freeze?: boolean;
+        introspect?: boolean | { history?: number };
         onError?: (err: unknown, info: { db: AnyDb; source: string }) => void;
       } = {},
     ): AnyDb {

@@ -248,7 +248,8 @@ export const loadThread = effect({
 Aborting a task that has already finished does nothing.
 
 - **Tasks start after the flush.** An op a task calls, even before its first `await`, lands in a new batch.
-- **Task context.** `db` is a read-only view showing the latest committed state, like any outside code. `run(op, args)` is the only way to write, and `signal` fires when the task is aborted.
+- **Task context.** `db` is a read-only view showing the latest committed state, like any outside code. `run(op, args)` is the only way to write, and `signal` fires when the task is aborted. `note(detail)` sets a debugging note on the task's `sys.tasks` row (see Introspection).
+- **Labels.** `task(fn, { label })` gives the task a human-readable name for introspection. Without one, the task is labelled with its scope's path.
 - **Aborted tasks can't write.** After an abort, `run` throws an `AbortError`, which also stops the task. `run(op, args, { ignoreAbort: true })` skips that check, for cleanup.
 - **Errors.** Tasks handle their own errors. Uncaught errors go to `onError`, except abort errors.
 - **Restart loops.** A task that updates its own row restarts itself, unless its scope has `rerunOn` and the fields it writes aren't listed. If that happens before the task's first `await`, it loops without ever yielding to the browser, so consecutive flushes are capped, 100 by default. When the cap is hit, every effect caught in the loop is disabled for the rest of the db's life: its tasks are aborted, no new ones start, and the error goes to `onError`.
@@ -321,6 +322,74 @@ Registration mistakes and unregistered tables or ops are covered under Definitio
 `onError(err, { db, source })` runs after the flush, so it can call ops, for example to record the error as a row. `source` gives the registered name of what failed, such as `chat.threadStats`, plus the key path of the scope or task when there is one.
 
 `onError` is optional, and errors never go back into it. If it throws, its error is rethrown from a fresh microtask with the original error as its `cause`. If no `onError` is given, each reported error is rethrown the same way. Either way the platform's global error handling picks it up: `window.onerror` and the console in browsers, or an uncaught exception in Node. The db itself stays consistent, since the flush has already finished.
+
+## Introspection
+
+A db can describe itself through built-in, read-only system tables. They are queried like any other table, so `read`, `subscribe`, `useQuery`, batching and stable results all apply, and devtools need no separate API.
+
+```ts
+import { createDb, sys } from "reactive-db";
+
+const db = createDb({ features, introspect: true }); // or { history: 50 }
+
+db.subscribe(sys.tasks.byStatus.statusEq("running"), render);
+useQuery(sys.tasks.byEffect.effectEq("chat.loadRoom"));
+useQuery(sys.effects.all());
+useQuery(sys.tables.all());
+```
+
+Introspection is opt-in. Without `introspect`, nothing is tracked and reading a system table throws with a hint to turn it on.
+
+### System tables
+
+**`sys.tasks`** has one row per task run, keyed by `id`, with indexes `byEffect: ["effect", "status"]` and `byStatus: ["status"]`.
+
+| Field | Meaning |
+| --- | --- |
+| `id` | A number, increasing with each run, unique within the db |
+| `effect` | The effect's registered name, such as `chat.loadRoom` |
+| `path` | The task's scope path, the same string `onError` receives as `source` |
+| `label` | From `task(fn, { label })`, or `path` when none is given |
+| `status` | How the task's code settled: `"running"`, `"done"`, `"failed"` or `"aborted"` |
+| `abortReason` | Why the engine aborted the task, if it did: `"restarted"`, `"scopeDisposed"` or `"effectDisabled"`, otherwise `null` |
+| `restartOf` | The id of the run this one replaced when its scope reran, otherwise `null` |
+| `note` | The last value passed to `ctx.note`, initially `null` |
+| `error` | What a failed task threw, otherwise `null` |
+| `startedAt`, `endedAt` | Timestamps from `Date.now()`; `endedAt` is `null` while running |
+
+**`sys.effects`** has one row per registered effect, keyed by `name`: its `inputs` (registered table names), `state` (`"active"`, or `"disabled"` after the flush cap), and counters `running`, `started`, `done`, `failed` and `aborted`.
+
+**`sys.tables`** has one row per registered table and aggregate, keyed by `name`, with index `byKind: ["kind"]`: its `kind` (`"table"` or `"aggregate"`), `key` field, `indexes` (name to columns), and `table`, the definition value itself, so a viewer can query any table it finds with `row.table.all()`. System tables do not list themselves.
+
+### Task lifecycle
+
+`status` records what the task's code did, and `abortReason` records what the engine did to it. They are separate because an abort and the task's own ending race each other.
+
+- **Running** from when the task starts, after the flush, until its function returns or its promise settles. A task cancelled before it started never gets a row.
+- **Done** when its function returns or its promise resolves.
+- **Failed** when it throws or rejects with anything but an abort error. The error is stored in `error` and, as before, reported to `onError`.
+- **Aborted** when it throws or rejects with an abort error. That includes the `AbortError` that `run` throws after an abort, and a `fetch` or timer that honours `signal`.
+- **`abortReason`** is set the moment the engine aborts the task, and kept after the task settles. Aborting a task that has already settled does nothing, as before.
+
+Reading the two together:
+
+| `status` | `abortReason` | Meaning |
+| --- | --- | --- |
+| `running` | `null` | Working |
+| `running` | set | Told to stop, but hasn't yet, for example because it awaits something that ignores `signal` |
+| `aborted` | set | Stopped by the engine |
+| `done` | set | Finished anyway, typically because its own final op moved its row out of the query, and the resulting flush aborted it before its promise resolved |
+| `aborted` | `null` | Rejected with an abort error the engine didn't cause, such as its own timeout |
+
+`note` calls are ignored once a task has settled.
+
+### Rules
+
+- **Only the engine writes.** System rows are written by the engine, never by ops, so writing to a system table from an op throws, like writing to an aggregate. System rows are not validated.
+- **Batched like everything else.** A lifecycle change marks the affected queries dirty and schedules a flush, as a commit does. Changes made during a flush, such as tasks starting, are delivered by the next flush, which does not count toward the effect flush cap.
+- **Aggregates may read system tables; effects may not.** An effect watching `sys.tasks` would restart on its own task's row, so declaring a system table as an effect input makes `createDb` throw. Aggregates cannot write, so they are safe.
+- **History is bounded.** Running tasks are always kept. For each effect, only the most recent `history` finished runs are kept (20 by default), and older rows are deleted.
+- **Reserved.** Registering a system table in a feature makes `createDb` throw.
 
 ## Lifecycle and React bindings
 

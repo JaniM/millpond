@@ -23,7 +23,7 @@
     "sourceMap": true,
     "noEmit": true
   },
-  "include": ["src", "test", "tsdown.config.ts", "vitest.config.ts"],
+  "include": ["src", "test", "demo", "tsdown.config.ts", "vitest.config.ts"],
   "//": "test/spec is the intended-API acceptance suite; it typechecks only once the type layer lands. Check it with `pnpm typecheck:spec` (tsconfig.spec.json).",
   "exclude": ["node_modules", "dist", "test/spec"]
 }
