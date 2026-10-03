@@ -14,6 +14,8 @@
   --ok: #16a34a;
   --warn: #d97706;
   --info: #2563eb;
+  --koi: #d9a200;
+  --koi-bg: #fff8e1;
   color-scheme: light;
 }
 
@@ -32,6 +34,8 @@
     --ok: #4ade80;
     --warn: #fbbf24;
     --info: #60a5fa;
+    --koi: #fbbf24;
+    --koi-bg: #3a2f0f;
     color-scheme: dark;
   }
 }
@@ -100,13 +104,13 @@ h2 {
 
 /* --- Layout --- */
 
-/* Rooms top-left, effects bottom-left, tables down the right. */
+/* The demo top-left, effects bottom-left, tables down the right. */
 .layout {
   display: grid;
   grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
   grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
   grid-template-areas:
-    "rooms tables"
+    "main tables"
     "effects tables";
   height: 100vh;
 }
@@ -114,8 +118,8 @@ h2 {
   overflow-y: auto;
   padding: 16px 20px 24px;
 }
-.rooms-column {
-  grid-area: rooms;
+.main-column {
+  grid-area: main;
 }
 .effects-column {
   grid-area: effects;
@@ -133,15 +137,20 @@ h2 {
   gap: 10px;
   margin-bottom: 16px;
 }
-.column-header button {
+/* Each demo's header links to the other, pushing the link and buttons right. */
+.column-header .nav {
   margin-left: auto;
+  text-decoration: none;
+}
+.column-header .nav:hover {
+  color: var(--accent);
 }
 
 @media (max-width: 900px) {
   .layout {
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows: auto;
-    grid-template-areas: "rooms" "effects" "tables";
+    grid-template-areas: "main" "effects" "tables";
     height: auto;
   }
   .column {

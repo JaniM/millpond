@@ -1,17 +1,6 @@
 import { z } from "zod";
-import {
-  aggregate,
-  count,
-  createDb,
-  effect,
-  feature,
-  max,
-  op,
-  sum,
-  type TaskContext,
-  table,
-} from "../src/index";
-import { pick, randomBetween, sleep } from "./util";
+import { aggregate, count, createDb, effect, feature, max, op, sum, table } from "../src/index";
+import { pick, randomBetween, wait } from "./util";
 
 const id = () => crypto.randomUUID().slice(0, 8);
 
@@ -158,16 +147,6 @@ const incoming = (): { author: string; body: string } => ({
   author: pick(PEOPLE),
   body: pick(LINES),
 });
-
-/**
- * Sleeps, noting the wait on the task's `sys.tasks` row. The effects panel
- * reads the trailing duration to draw a progress bar.
- */
-async function wait({ note, signal }: TaskContext, what: string, ms: number): Promise<void> {
-  note(`${what} · ${(ms / 1000).toFixed(1)}s`);
-  await sleep(ms, signal);
-  note(null);
-}
 
 /** Simulates fetching a room's recent history, which takes two seconds. */
 export const loadRoom = effect({

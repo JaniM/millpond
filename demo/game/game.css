@@ -1,0 +1,162 @@
+/* --- Pond --- */
+
+.pond {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 20px 16px;
+  margin-bottom: 14px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+.pond-count {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.fish {
+  font-size: 40px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+button.cast {
+  margin-top: 8px;
+  padding: 10px 22px;
+  font-size: 16px;
+}
+button.cast:active {
+  transform: scale(0.97);
+}
+.pond-stats {
+  margin-top: 4px;
+}
+
+/* --- Golden koi --- */
+
+.koi-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+button.koi {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 14px;
+  text-align: left;
+  font-weight: 600;
+  border-color: var(--koi);
+  background: var(--koi-bg);
+  animation: pop 0.2s ease-out;
+}
+.koi-bar {
+  height: 4px;
+  background: var(--panel-2);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.koi-bar span {
+  display: block;
+  height: 100%;
+  background: var(--koi);
+  animation: drain linear forwards;
+}
+@keyframes drain {
+  from {
+    width: 100%;
+  }
+  to {
+    width: 0;
+  }
+}
+
+/* --- Shop --- */
+
+.shop {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.shop-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+.shop-item.locked {
+  border-style: dashed;
+  background: transparent;
+}
+.shop-item .icon {
+  font-size: 26px;
+  width: 36px;
+  text-align: center;
+}
+.shop-info {
+  flex: 1;
+  min-width: 0;
+}
+.shop-info h2 {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+.owned {
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+.shop-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.shop-actions button {
+  white-space: nowrap;
+  font-size: 12px;
+  padding: 4px 10px;
+}
+
+/* One small bar per building, refilling on each catch. */
+.units {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 3px;
+  margin-top: 6px;
+}
+.unit {
+  width: 14px;
+  height: 4px;
+  background: var(--panel-2);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.unit span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  animation: fill linear forwards;
+}
+/* Sped up by a golden koi. */
+.unit.boosted span {
+  background: var(--koi);
+}
+
+@media (max-width: 520px) {
+  .shop-item {
+    flex-wrap: wrap;
+  }
+  .shop-actions {
+    flex-direction: row;
+    width: 100%;
+  }
+  .shop-actions button {
+    flex: 1;
+  }
+}

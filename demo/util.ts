@@ -1,3 +1,5 @@
+import type { TaskContext } from "../src/index";
+
 /** Resolves after `ms`, or rejects with the signal's reason when it aborts. */
 export function sleep(ms: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -12,6 +14,16 @@ export function sleep(ms: number, signal: AbortSignal): Promise<void> {
       { once: true },
     );
   });
+}
+
+/**
+ * Sleeps, noting the wait on the task's `sys.tasks` row. The inspector's
+ * effects panel reads the trailing duration to draw a progress bar.
+ */
+export async function wait({ note, signal }: TaskContext, what: string, ms: number): Promise<void> {
+  note(`${what} · ${(ms / 1000).toFixed(1)}s`);
+  await sleep(ms, signal);
+  note(null);
 }
 
 /** A random integer in [min, max]. */

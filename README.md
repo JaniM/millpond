@@ -80,6 +80,11 @@ library (imported straight from `src/`). The left column holds chatrooms; the
 right shows each effect's tasks and every registered table's live contents,
 read from the `sys.*` introspection tables.
 
+`/game/` on the same server is a small idle fishing game with the same side
+panels. Every building runs its own effect task that lands a catch each cycle,
+and two chained aggregates (`fleet` → `economy`) keep prices and income up to
+date.
+
 ### Spec acceptance suite
 
 `test/spec/` is an executable, spec-driven acceptance suite — one file per area
