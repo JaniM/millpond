@@ -72,6 +72,7 @@
     "check": "biome check --write .",
     "verify:package": "publint && attw --pack",
     "verify": "biome ci . && pnpm run typecheck && pnpm run test && pnpm run build",
+    "prepare": "tsdown",
     "prepublishOnly": "pnpm run build"
   },
   "peerDependencies": {
