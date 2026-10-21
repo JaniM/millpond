@@ -26,8 +26,8 @@ export interface TaskOptions {
 
 /**
  * Registers the async task for the current scope. Called inside a `watch`
- * scope (`q.each`/`q.reduce`), so `rerunOn` and abort/restart are governed by
- * that scope, not by `task` itself.
+ * scope (`q.each`/`q.reduce`/`q.with`), so `rerunOn` and abort/restart are
+ * governed by that scope, not by `task` itself.
  */
 export type Task = (fn: (ctx: TaskContext) => void | Promise<void>, options?: TaskOptions) => void;
 

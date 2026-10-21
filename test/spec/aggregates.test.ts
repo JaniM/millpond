@@ -174,6 +174,152 @@ spec("Aggregates", () => {
       expect(db.read(titles.get("t1"))?.title).toBe("renamed");
       expect(seen).toHaveBeenCalledWith("t1");
     });
+
+    it("passes q.each the row as of its scope's previous run, undefined on the first", () => {
+      const seen: [string, string | undefined, boolean][] = [];
+      const counts = aggregate({
+        table: table(z.object({ threadId: z.string(), n: z.number() }), { key: "threadId" }),
+        inputs: [w.tables.threads, w.tables.messages],
+        compute: (q, emit) =>
+          q.each(w.tables.threads.all(), (t, prev) => {
+            seen.push([t.title, prev?.title, prev === t]);
+            emit({
+              threadId: t.id,
+              n: q.reduce(w.tables.messages.byThread.threadIdEq(t.id), count),
+            });
+          }),
+      });
+      const db = build({ threads: w.tables.threads, messages: w.tables.messages, counts });
+      db.run(w.ops.createThread, { id: "t1", title: "one" });
+      db.read(counts.all());
+      db.run(w.ops.renameThread, { id: "t1", title: "uno" });
+      db.read(counts.all());
+      db.run(w.ops.postMessage, { id: "m1", threadId: "t1", body: "a", sentAt: 1 }); // row untouched
+      db.read(counts.all());
+      expect(seen).toEqual([
+        ["one", undefined, false],
+        ["uno", "one", false],
+        ["uno", "uno", true], // reran for its count, so the snapshot is the same row
+      ]);
+    });
+
+    it("passes q.each the snapshot from the last rerun, even when rerunOn skipped updates", () => {
+      const prevs: (boolean | undefined)[] = [];
+      const titles = aggregate({
+        table: table(z.object({ threadId: z.string(), title: z.string() }), { key: "threadId" }),
+        inputs: [w.tables.threads],
+        compute: (q, emit) =>
+          q.each(
+            w.tables.threads.all(),
+            (t, prev) => {
+              prevs.push(prev?.archived);
+              emit({ threadId: t.id, title: t.title });
+            },
+            { rerunOn: ["title"] },
+          ),
+      });
+      const db = build({ threads: w.tables.threads, messages: w.tables.messages, titles });
+      db.run(w.ops.createThread, { id: "t1", title: "one" });
+      db.read(titles.all());
+      db.run(w.ops.archive, { threadId: "t1" }); // not in rerunOn: no rerun
+      db.read(titles.all());
+      db.run(w.ops.renameThread, { id: "t1", title: "renamed" });
+      db.read(titles.all());
+      expect(prevs).toEqual([undefined, false]); // the snapshot predates `archived: true`
+    });
+
+    it("passes q.each the row from the last successful run after a failed one", async () => {
+      const prevs: (string | undefined)[] = [];
+      const titles = aggregate({
+        table: table(z.object({ threadId: z.string(), title: z.string() }), { key: "threadId" }),
+        inputs: [w.tables.threads],
+        compute: (q, emit) =>
+          q.each(w.tables.threads.all(), (t, prev) => {
+            prevs.push(prev?.title);
+            if (t.title === "bad") throw new Error("compute boom");
+            emit({ threadId: t.id, title: t.title });
+          }),
+      });
+      const db = build({ threads: w.tables.threads, titles }, { onError: () => {} });
+      db.run(w.ops.createThread, { id: "t1", title: "one" });
+      await flush();
+      db.run(w.ops.renameThread, { id: "t1", title: "bad" });
+      await flush();
+      db.run(w.ops.renameThread, { id: "t1", title: "fixed" });
+      await flush();
+      expect(prevs).toEqual([undefined, "one", "one"]); // the retry sees what the failed run saw
+    });
+
+    it("q.with calls fn once with the whole result, in its own scope", () => {
+      const threadRuns = vi.fn();
+      const withRuns = vi.fn();
+      const sizes = aggregate({
+        table: table(z.object({ threadId: z.string(), n: z.number() }), { key: "threadId" }),
+        inputs: [w.tables.threads, w.tables.messages],
+        compute: (q, emit) =>
+          q.each(w.tables.threads.all(), (t) => {
+            threadRuns(t.id);
+            const n = q.with(w.tables.messages.byThread.threadIdEq(t.id), (ms) => {
+              withRuns(ms.map((m) => m.id));
+              return ms.length;
+            });
+            emit({ threadId: t.id, n });
+          }),
+      });
+      const db = build({ threads: w.tables.threads, messages: w.tables.messages, sizes });
+      db.run(w.ops.createThread, { id: "t1", title: "one" });
+      db.run(w.ops.postMessage, { id: "m1", threadId: "t1", body: "a", sentAt: 1 });
+      db.run(w.ops.postMessage, { id: "m2", threadId: "t1", body: "b", sentAt: 2 });
+      expect(db.read(sizes.get("t1"))?.n).toBe(2);
+      expect(withRuns).toHaveBeenLastCalledWith(["m1", "m2"]);
+      threadRuns.mockClear();
+      withRuns.mockClear();
+
+      db.run(w.ops.editBody, { id: "m1", body: "edited" }); // a row in the result changed…
+      db.read(sizes.all());
+      expect(withRuns).toHaveBeenCalledTimes(1); // …so the with scope reran…
+      expect(threadRuns).not.toHaveBeenCalled(); // …but returned the same count
+
+      db.run(w.ops.postMessage, { id: "m3", threadId: "t1", body: "c", sentAt: 3 });
+      expect(db.read(sizes.get("t1"))?.n).toBe(3);
+      expect(withRuns).toHaveBeenLastCalledWith(["m1", "m2", "m3"]);
+      expect(threadRuns).toHaveBeenCalledWith("t1");
+    });
+
+    it("q.with reruns on rows entering or leaving, and on changes only in rerunOn fields", () => {
+      const runs = vi.fn();
+      const latest = aggregate({
+        table: table(z.object({ id: z.string(), last: z.number() }), { key: "id" }),
+        inputs: [w.tables.messages],
+        compute: (q, emit) =>
+          emit({
+            id: "all",
+            last: q.with(
+              w.tables.messages.all(),
+              (ms) => {
+                runs();
+                return Math.max(0, ...ms.map((m) => m.sentAt));
+              },
+              { rerunOn: ["sentAt"] },
+            ),
+          }),
+      });
+      const db = build({ threads: w.tables.threads, messages: w.tables.messages, latest });
+      db.run(w.ops.createThread, { id: "t1", title: "one" });
+      db.run(w.ops.postMessage, { id: "m1", threadId: "t1", body: "a", sentAt: 1 });
+      expect(db.read(latest.get("all"))?.last).toBe(1);
+      runs.mockClear();
+
+      db.run(w.ops.editBody, { id: "m1", body: "edited" }); // not in rerunOn
+      db.read(latest.all());
+      expect(runs).not.toHaveBeenCalled();
+
+      db.run(w.ops.postMessage, { id: "m2", threadId: "t1", body: "b", sentAt: 5 }); // enters
+      expect(db.read(latest.get("all"))?.last).toBe(5);
+      db.run(w.ops.archive, { threadId: "t1" }); // both leave
+      expect(db.read(latest.get("all"))?.last).toBe(0);
+      expect(runs).toHaveBeenCalledTimes(2);
+    });
   });
 
   describe("reducers", () => {
@@ -397,6 +543,43 @@ spec("Aggregates", () => {
       db.run(w.ops.renameThread, { id: "t1", title: "fixed" });
       await flush();
       expect(db.read(flaky.get("t1"))?.title).toBe("fixed"); // retried on input change
+    });
+
+    it("reports a q.with error under its parent's path, keeping its previous value", async () => {
+      const sources: string[] = [];
+      let boom = false;
+      const sizes = aggregate({
+        table: table(z.object({ threadId: z.string(), n: z.number() }), { key: "threadId" }),
+        inputs: [w.tables.threads, w.tables.messages],
+        compute: (q, emit) =>
+          q.each(w.tables.threads.all(), (t) =>
+            emit({
+              threadId: t.id,
+              n: q.with(w.tables.messages.byThread.threadIdEq(t.id), (ms) => {
+                if (boom) throw new Error("with boom");
+                return ms.length;
+              }),
+            }),
+          ),
+      });
+      const db = build(
+        { threads: w.tables.threads, messages: w.tables.messages, sizes },
+        { onError: (_e, { source }) => sources.push(source) },
+      );
+      db.run(w.ops.createThread, { id: "t1", title: "one" });
+      db.run(w.ops.postMessage, { id: "m1", threadId: "t1", body: "a", sentAt: 1 });
+      await flush();
+
+      boom = true;
+      db.run(w.ops.postMessage, { id: "m2", threadId: "t1", body: "b", sentAt: 2 });
+      await flush();
+      expect(sources).toEqual(["c.sizes/t1"]);
+      expect(db.read(sizes.get("t1"))?.n).toBe(1);
+
+      boom = false;
+      db.run(w.ops.postMessage, { id: "m3", threadId: "t1", body: "c", sentAt: 3 });
+      await flush();
+      expect(db.read(sizes.get("t1"))?.n).toBe(3); // retried on input change
     });
   });
 });

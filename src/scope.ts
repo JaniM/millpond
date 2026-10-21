@@ -4,8 +4,8 @@ import { Registry } from "./store";
 import type { AbortReason } from "./sys";
 
 // The scope tree behind aggregates and effects. A scope runs a function,
-// records what it read, and owns the collections (`q.each`/`q.reduce`) it
-// created. Changes arrive as row diffs in an inbox; they mark the affected
+// records what it read, and owns the collections (`q.each`/`q.reduce`/`q.with`)
+// it created. Changes arrive as row diffs in an inbox; they mark the affected
 // scopes and collections dirty, and `update()` then walks only the dirty paths.
 
 /** What a scope engine needs from its db. */
@@ -39,11 +39,16 @@ type Watch = ReadWatch | CollectionWatch;
 
 type AnyReducer = Reducer<unknown, unknown, unknown>;
 
+/** A collection's callback: a row and its previous snapshot, or a `with` query's whole result. */
+type ScopeFn = (input: unknown, prev?: AnyRow) => unknown;
+
 export class Scope {
   collections: Collection[] = [];
   reads = new Map<string, ReadWatch>();
   emitted = new Map<unknown, AnyRow>();
   value: unknown = undefined;
+  /** The row as of the last successful run; `q.each` passes it as `prev`. */
+  lastRow: AnyRow | undefined = undefined;
   dirtyFull = false;
   dirtyPath = false;
   disposed = false;
@@ -78,9 +83,9 @@ export class Collection {
 
   constructor(
     readonly owner: Scope,
-    readonly kind: "each" | "reduce",
+    readonly kind: "each" | "reduce" | "with",
     readonly query: QueryInfo,
-    public fn: ((row: AnyRow) => unknown) | undefined,
+    public fn: ScopeFn | undefined,
     readonly reducer: AnyReducer | undefined,
     public rerunOn: readonly string[] | undefined,
   ) {
@@ -123,14 +128,14 @@ export abstract class ScopeEngine {
     readonly inputs: ReadonlySet<TableDef>,
   ) {
     this.q = {
-      each: (query: unknown, fn: (row: AnyRow) => unknown, options?: { rerunOn?: string[] }) =>
+      each: (query: unknown, fn: ScopeFn, options?: { rerunOn?: string[] }) =>
         this.collection("each", query, fn, undefined, options),
       reduce: (query: unknown, a: unknown, b?: unknown, c?: unknown) =>
         typeof a === "function"
           ? this.collection(
               "reduce",
               query,
-              a as (row: AnyRow) => unknown,
+              a as ScopeFn,
               b as AnyReducer,
               c as { rerunOn?: string[] },
             )
@@ -141,6 +146,8 @@ export abstract class ScopeEngine {
               a as AnyReducer,
               b as { rerunOn?: string[] },
             ),
+      with: (query: unknown, fn: ScopeFn, options?: { rerunOn?: string[] }) =>
+        this.collection("with", query, fn, undefined, options),
       read: (query: unknown) => this.read(query),
     };
   }
@@ -201,7 +208,7 @@ export abstract class ScopeEngine {
   pathOf(scope: Scope): string {
     const keys: string[] = [];
     for (let s: Scope | undefined = scope; s?.parent !== undefined; s = s.parent.owner) {
-      keys.unshift(String(s.key));
+      if (s.parent.kind !== "with") keys.unshift(String(s.key));
     }
     return [this.name, ...keys].join("/");
   }
@@ -225,6 +232,11 @@ export abstract class ScopeEngine {
         for (const w of hit) {
           if (w.kind === "read") {
             if (!w.scope.disposed) this.markFull(w.scope);
+          } else if (w.coll.kind === "with") {
+            const child = w.coll.children.get(undefined);
+            if (child !== undefined && !w.coll.disposed && this.withHit(w.coll, before, after)) {
+              this.markFull(child);
+            }
           } else if (!w.coll.disposed) {
             const inAfter = after !== undefined && matchesQuery(w.query, after);
             w.coll.pending.set(key, inAfter ? after : undefined);
@@ -234,6 +246,24 @@ export abstract class ScopeEngine {
       }
     }
     this.inbox.clear();
+  }
+
+  /**
+   * Whether a row change reruns a `q.with` scope: the row enters or leaves the
+   * result, or changes while in it (only in `rerunOn` fields, when given).
+   */
+  private withHit(
+    coll: Collection,
+    before: AnyRow | undefined,
+    after: AnyRow | undefined,
+  ): boolean {
+    const inBefore = before !== undefined && matchesQuery(coll.query, before);
+    const inAfter = after !== undefined && matchesQuery(coll.query, after);
+    if (inBefore !== inAfter) return true;
+    if (!inAfter) return false;
+    const b = before as AnyRow;
+    const a = after as AnyRow;
+    return coll.rerunOn?.some((f) => !Object.is(b[f], a[f])) ?? true;
   }
 
   private markFull(scope: Scope): void {
@@ -324,6 +354,10 @@ export abstract class ScopeEngine {
       coll.result = this.eachResult(coll, this.host.rows(coll.query));
       return true;
     }
+    if (coll.kind === "with") {
+      coll.result = coll.children.get(undefined)?.value;
+      return true;
+    }
     const next = coll.resultOf();
     const same = Object.is(next, coll.result);
     coll.result = next;
@@ -349,6 +383,16 @@ export abstract class ScopeEngine {
     coll.pending.clear();
     coll.dirtyChildren.clear();
     coll.dirtyPath = false;
+    if (coll.kind === "with") {
+      let child = coll.children.get(undefined);
+      if (child === undefined) {
+        child = new Scope(coll, undefined, undefined);
+        coll.children.set(undefined, child);
+      }
+      this.runScope(child, true);
+      coll.result = child.value;
+      return;
+    }
     const rows = this.host.rows(coll.query);
     const keyField = coll.query.table.key;
     const live = new Set(rows.map((r) => r[keyField]));
@@ -422,6 +466,7 @@ export abstract class ScopeEngine {
       for (const [k, w] of prevReads) if (!scope.nextReads.has(k)) this.removeRead(w);
       scope.reads = scope.nextReads;
       scope.value = value;
+      scope.lastRow = scope.row;
       if (scope === this.root) this.rootFailed = false;
       this.afterSuccess(scope);
     } else {
@@ -447,7 +492,9 @@ export abstract class ScopeEngine {
       this.runRoot();
       return undefined;
     }
-    return coll.fn ? coll.fn(scope.row as AnyRow) : scope.row;
+    if (coll.kind === "with") return (coll.fn as ScopeFn)(this.host.readQuery(coll.query));
+    if (coll.fn === undefined) return scope.row;
+    return coll.kind === "each" ? coll.fn(scope.row, scope.lastRow) : coll.fn(scope.row);
   }
 
   private checkInput(query: unknown, what: string): QueryInfo {
@@ -461,16 +508,16 @@ export abstract class ScopeEngine {
   }
 
   private collection(
-    kind: "each" | "reduce",
+    kind: Collection["kind"],
     query: unknown,
-    fn: ((row: AnyRow) => unknown) | undefined,
+    fn: ScopeFn | undefined,
     reducer: AnyReducer | undefined,
     options: { rerunOn?: readonly string[] } | undefined,
   ): unknown {
     const scope = this.requireCurrent(`q.${kind}`);
     const q = this.checkInput(query, `q.${kind}`);
-    if (kind === "each" && typeof fn !== "function") {
-      throw new TypeError("millpond: q.each expects a function.");
+    if (kind !== "reduce" && typeof fn !== "function") {
+      throw new TypeError(`millpond: q.${kind} expects a function.`);
     }
     if (kind === "reduce" && typeof reducer?.init !== "function") {
       throw new TypeError("millpond: q.reduce expects a reducer ({ init, add, remove }).");
@@ -493,6 +540,8 @@ export abstract class ScopeEngine {
     } else {
       coll = new Collection(scope, kind, q, fn, reducer, options?.rerunOn);
       this.registry.add(coll.watch);
+      // A `with` scope reads the whole result, so keep its identity across reruns.
+      if (kind === "with") this.host.retain(q);
       this.resync(coll);
     }
     scope.nextCollections.push(coll);
@@ -533,6 +582,7 @@ export abstract class ScopeEngine {
     if (coll.disposed) return;
     coll.disposed = true;
     this.registry.remove(coll.watch);
+    if (coll.kind === "with") this.host.release(coll.query);
     for (const child of coll.children.values()) this.disposeScope(child);
     coll.children.clear();
   }

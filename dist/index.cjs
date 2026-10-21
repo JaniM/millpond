@@ -480,6 +480,8 @@ var Scope = class {
 	reads = /* @__PURE__ */ new Map();
 	emitted = /* @__PURE__ */ new Map();
 	value = void 0;
+	/** The row as of the last successful run; `q.each` passes it as `prev`. */
+	lastRow = void 0;
 	dirtyFull = false;
 	dirtyPath = false;
 	disposed = false;
@@ -548,6 +550,7 @@ var ScopeEngine = class {
 		this.q = {
 			each: (query, fn, options) => this.collection("each", query, fn, void 0, options),
 			reduce: (query, a, b, c) => typeof a === "function" ? this.collection("reduce", query, a, b, c) : this.collection("reduce", query, void 0, a, b),
+			with: (query, fn, options) => this.collection("with", query, fn, void 0, options),
 			read: (query) => this.read(query)
 		};
 	}
@@ -600,7 +603,7 @@ var ScopeEngine = class {
 	/** The registered name plus the key path of a scope. */
 	pathOf(scope) {
 		const keys = [];
-		for (let s = scope; s?.parent !== void 0; s = s.parent.owner) keys.unshift(String(s.key));
+		for (let s = scope; s?.parent !== void 0; s = s.parent.owner) if (s.parent.kind !== "with") keys.unshift(String(s.key));
 		return [this.name, ...keys].join("/");
 	}
 	requireCurrent(what) {
@@ -615,6 +618,9 @@ var ScopeEngine = class {
 			if (after !== void 0) this.registry.collect(table, after, hit);
 			for (const w of hit) if (w.kind === "read") {
 				if (!w.scope.disposed) this.markFull(w.scope);
+			} else if (w.coll.kind === "with") {
+				const child = w.coll.children.get(void 0);
+				if (child !== void 0 && !w.coll.disposed && this.withHit(w.coll, before, after)) this.markFull(child);
 			} else if (!w.coll.disposed) {
 				const inAfter = after !== void 0 && require_internal.matchesQuery(w.query, after);
 				w.coll.pending.set(key, inAfter ? after : void 0);
@@ -622,6 +628,19 @@ var ScopeEngine = class {
 			}
 		}
 		this.inbox.clear();
+	}
+	/**
+	* Whether a row change reruns a `q.with` scope: the row enters or leaves the
+	* result, or changes while in it (only in `rerunOn` fields, when given).
+	*/
+	withHit(coll, before, after) {
+		const inBefore = before !== void 0 && require_internal.matchesQuery(coll.query, before);
+		const inAfter = after !== void 0 && require_internal.matchesQuery(coll.query, after);
+		if (inBefore !== inAfter) return true;
+		if (!inAfter) return false;
+		const b = before;
+		const a = after;
+		return coll.rerunOn?.some((f) => !Object.is(b[f], a[f])) ?? true;
 	}
 	markFull(scope) {
 		scope.dirtyFull = true;
@@ -699,6 +718,10 @@ var ScopeEngine = class {
 			coll.result = this.eachResult(coll, this.host.rows(coll.query));
 			return true;
 		}
+		if (coll.kind === "with") {
+			coll.result = coll.children.get(void 0)?.value;
+			return true;
+		}
 		const next = coll.resultOf();
 		const same = Object.is(next, coll.result);
 		coll.result = next;
@@ -721,6 +744,16 @@ var ScopeEngine = class {
 		coll.pending.clear();
 		coll.dirtyChildren.clear();
 		coll.dirtyPath = false;
+		if (coll.kind === "with") {
+			let child = coll.children.get(void 0);
+			if (child === void 0) {
+				child = new Scope(coll, void 0, void 0);
+				coll.children.set(void 0, child);
+			}
+			this.runScope(child, true);
+			coll.result = child.value;
+			return;
+		}
 		const rows = this.host.rows(coll.query);
 		const keyField = coll.query.table.key;
 		const live = new Set(rows.map((r) => r[keyField]));
@@ -785,6 +818,7 @@ var ScopeEngine = class {
 			for (const [k, w] of prevReads) if (!scope.nextReads.has(k)) this.removeRead(w);
 			scope.reads = scope.nextReads;
 			scope.value = value;
+			scope.lastRow = scope.row;
 			if (scope === this.root) this.rootFailed = false;
 			this.afterSuccess(scope);
 		} else {
@@ -808,7 +842,9 @@ var ScopeEngine = class {
 			this.runRoot();
 			return;
 		}
-		return coll.fn ? coll.fn(scope.row) : scope.row;
+		if (coll.kind === "with") return coll.fn(this.host.readQuery(coll.query));
+		if (coll.fn === void 0) return scope.row;
+		return coll.kind === "each" ? coll.fn(scope.row, scope.lastRow) : coll.fn(scope.row);
 	}
 	checkInput(query, what) {
 		const q = require_internal.internalOf(query, "query");
@@ -818,7 +854,7 @@ var ScopeEngine = class {
 	collection(kind, query, fn, reducer, options) {
 		const scope = this.requireCurrent(`q.${kind}`);
 		const q = this.checkInput(query, `q.${kind}`);
-		if (kind === "each" && typeof fn !== "function") throw new TypeError("millpond: q.each expects a function.");
+		if (kind !== "reduce" && typeof fn !== "function") throw new TypeError(`millpond: q.${kind} expects a function.`);
 		if (kind === "reduce" && typeof reducer?.init !== "function") throw new TypeError("millpond: q.reduce expects a reducer ({ init, add, remove }).");
 		const old = scope.collections[scope.cursor++];
 		let coll;
@@ -831,6 +867,7 @@ var ScopeEngine = class {
 		} else {
 			coll = new Collection(scope, kind, q, fn, reducer, options?.rerunOn);
 			this.registry.add(coll.watch);
+			if (kind === "with") this.host.retain(q);
 			this.resync(coll);
 		}
 		scope.nextCollections.push(coll);
@@ -869,6 +906,7 @@ var ScopeEngine = class {
 		if (coll.disposed) return;
 		coll.disposed = true;
 		this.registry.remove(coll.watch);
+		if (coll.kind === "with") this.host.release(coll.query);
 		for (const child of coll.children.values()) this.disposeScope(child);
 		coll.children.clear();
 	}

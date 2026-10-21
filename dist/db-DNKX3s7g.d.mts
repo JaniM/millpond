@@ -103,9 +103,12 @@ interface Reducer<T, Acc = unknown, Out = Acc> {
   remove(acc: Acc, value: T): Acc;
   result?(acc: Acc): Out;
 }
-/** Options shared by the scope constructors `each` and `reduce`. */
+/** Options shared by the scope constructors `each`, `reduce` and `with`. */
 interface ScopeOptions<Row> {
-  /** Only changes to the listed fields rerun a row's scope. */
+  /**
+   * Only changes to the listed fields rerun a row's scope. A `with` scope
+   * still reruns when a row enters or leaves the result.
+   */
   rerunOn?: readonly (keyof Row & string)[];
 }
 /**
@@ -115,12 +118,21 @@ interface ScopeOptions<Row> {
  * recompute incrementally.
  */
 interface ScopeApi<Allowed = unknown> {
-  /** Calls `fn` once per row, each in its own scope, and returns the results. */
-  each<Row extends Allowed, R>(query: Query<Row, readonly Row[]>, fn: (row: Row) => R, options?: ScopeOptions<Row>): R[];
+  /**
+   * Calls `fn` once per row, each in its own scope, and returns the results.
+   * `prev` is the row as of the scope's previous run, or `undefined` on its first.
+   */
+  each<Row extends Allowed, R>(query: Query<Row, readonly Row[]>, fn: (row: Row, prev: Row | undefined) => R, options?: ScopeOptions<Row>): R[];
   /** Folds the rows of a query with a reducer. */
   reduce<Row extends Allowed, Acc, Out>(query: Query<Row, readonly Row[]>, reducer: Reducer<Row, Acc, Out>, options?: ScopeOptions<Row>): Out;
   /** Folds a value mapped from each row with a reducer. */
   reduce<Row extends Allowed, M, Acc, Out>(query: Query<Row, readonly Row[]>, map: (row: Row) => M, reducer: Reducer<M, Acc, Out>, options?: ScopeOptions<Row>): Out;
+  /**
+   * Calls `fn` with the query's whole result, in its own scope, and returns
+   * what it returns. The scope reruns when a row enters, leaves or changes in
+   * the result.
+   */
+  with<Row extends Allowed, Result, R>(query: Query<Row, Result>, fn: (result: Result) => R, options?: ScopeOptions<Row>): R;
   /** Reads a query inside the current scope. */
   read<Row extends Allowed, Result>(query: Query<Row, Result>): Result;
 }
@@ -191,8 +203,8 @@ interface TaskOptions {
 }
 /**
  * Registers the async task for the current scope. Called inside a `watch`
- * scope (`q.each`/`q.reduce`), so `rerunOn` and abort/restart are governed by
- * that scope, not by `task` itself.
+ * scope (`q.each`/`q.reduce`/`q.with`), so `rerunOn` and abort/restart are
+ * governed by that scope, not by `task` itself.
  */
 type Task = (fn: (ctx: TaskContext) => void | Promise<void>, options?: TaskOptions) => void;
 interface EffectConfig<Inputs extends readonly Table[]> {
@@ -279,4 +291,4 @@ interface Db<Features extends Record<string, Feature> = Record<string, Feature>>
 declare function createDb<const Features extends Record<string, Feature>>(options: CreateDbOptions<Features>): Db<Features>;
 //#endregion
 export { Indexable as A, Schema as B, AggregateConfig as C, aggregate as D, ScopeOptions as E, TableFor as F, Query as H, TableOptions as I, TableQueries as L, InsertRow as M, RowOf as N, IndexColumns as O, Table as P, table as R, Aggregate as S, ScopeApi as T, Step as U, StandardSchemaV1 as V, TaskOptions as _, OpFn as a, Tx as b, Unsubscribe as c, FeatureConfig as d, feature as f, TaskContext as g, Task as h, ErrorInfo as i, IndexableKeys as j, IndexMap as k, createDb as l, EffectConfig as m, CreateDbOptions as n, OpsTree as o, Effect as p, Db as r, ReadonlyDb as s, AnyDb as t, Feature as u, effect as v, Reducer as w, op as x, Op as y, InferRow as z };
-//# sourceMappingURL=db-DJXBIulF.d.mts.map
+//# sourceMappingURL=db-DNKX3s7g.d.mts.map

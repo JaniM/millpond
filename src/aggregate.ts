@@ -15,9 +15,12 @@ export interface Reducer<T, Acc = unknown, Out = Acc> {
   result?(acc: Acc): Out;
 }
 
-/** Options shared by the scope constructors `each` and `reduce`. */
+/** Options shared by the scope constructors `each`, `reduce` and `with`. */
 export interface ScopeOptions<Row> {
-  /** Only changes to the listed fields rerun a row's scope. */
+  /**
+   * Only changes to the listed fields rerun a row's scope. A `with` scope
+   * still reruns when a row enters or leaves the result.
+   */
   rerunOn?: readonly (keyof Row & string)[];
 }
 
@@ -28,10 +31,13 @@ export interface ScopeOptions<Row> {
  * recompute incrementally.
  */
 export interface ScopeApi<Allowed = unknown> {
-  /** Calls `fn` once per row, each in its own scope, and returns the results. */
+  /**
+   * Calls `fn` once per row, each in its own scope, and returns the results.
+   * `prev` is the row as of the scope's previous run, or `undefined` on its first.
+   */
   each<Row extends Allowed, R>(
     query: Query<Row, readonly Row[]>,
-    fn: (row: Row) => R,
+    fn: (row: Row, prev: Row | undefined) => R,
     options?: ScopeOptions<Row>,
   ): R[];
   /** Folds the rows of a query with a reducer. */
@@ -47,6 +53,16 @@ export interface ScopeApi<Allowed = unknown> {
     reducer: Reducer<M, Acc, Out>,
     options?: ScopeOptions<Row>,
   ): Out;
+  /**
+   * Calls `fn` with the query's whole result, in its own scope, and returns
+   * what it returns. The scope reruns when a row enters, leaves or changes in
+   * the result.
+   */
+  with<Row extends Allowed, Result, R>(
+    query: Query<Row, Result>,
+    fn: (result: Result) => R,
+    options?: ScopeOptions<Row>,
+  ): R;
   /** Reads a query inside the current scope. */
   read<Row extends Allowed, Result>(query: Query<Row, Result>): Result;
 }

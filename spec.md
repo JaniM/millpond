@@ -176,12 +176,13 @@ export const threadStats = aggregate({
 
 ### Scopes
 
-- `q.each(query, fn)` calls `fn` once per row, each in its own scope keyed by the row's primary key, and returns the array of results.
+- `q.each(query, fn)` calls `fn(row, prev)` once per row, each in its own scope keyed by the row's primary key, and returns the array of results. `prev` is the row as of the scope's previous run, or `undefined` on its first, so a rerun can tell which fields changed.
 - `q.reduce(query, fn, reducer)` does the same, but folds the results with a reducer. The mapping function is optional: `q.reduce(query, reducer)` folds the rows themselves, so `q.reduce(query, count)` counts rows.
+- `q.with(query, fn)` calls `fn` once with the query's whole result, in a single scope of its own, and returns what `fn` returns. The scope reruns when a row enters, leaves or changes in the result.
 - `q.read(query)` reads a query inside the current scope.
 - Any callback can call these again, so scopes nest to any depth.
-- `q.each` and `q.reduce` take an optional `{ rerunOn: [...fields] }`. Only changes to the listed fields rerun a row's scope; without the option, any change does. The list is type-checked against the row.
-- The row a scope receives is a snapshot as of its last rerun.
+- `q.each`, `q.reduce` and `q.with` take an optional `{ rerunOn: [...fields] }`. Only changes to the listed fields rerun a row's scope; without the option, any change does. A `q.with` scope still reruns when a row enters or leaves the result. The list is type-checked against the row.
+- The row a scope receives is a snapshot as of its last rerun, and so is `prev`: if a run throws, the retry gets the same `prev`.
 
 ### What reruns
 
@@ -237,6 +238,14 @@ export const loadThread = effect({
 ```
 
 `watch` uses the same scopes as an aggregate's compute function: it nests to any depth, reads only its declared inputs, and cannot call ops.
+
+To run one task for a whole query instead of one per row, register it inside `q.with`. The task then restarts whenever a row enters or leaves the query, or a row in it changes in a field `rerunOn` covers:
+
+```ts
+q.with(loadRequests.byStatus.statusEq("pending"), (reqs) => {
+  if (reqs.length > 0) task(({ run, signal }) => loadBatch(reqs, run, signal));
+});
+```
 
 | When | The task |
 | --- | --- |

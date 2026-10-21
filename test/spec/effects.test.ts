@@ -197,6 +197,75 @@ spec("Effects and async tasks", () => {
     expect(starts).toHaveBeenCalledTimes(1); // self-update did not restart the task
   });
 
+  it("runs one task for a whole query with q.with, restarting it when the result changes", async () => {
+    const batches: string[][] = [];
+    const signals: AbortSignal[] = [];
+    const gate = deferred<void>();
+    const loadAll = effect({
+      inputs: [w.tables.loadRequests],
+      watch: (q, task) =>
+        q.with(pending(), (reqs) => {
+          if (reqs.length === 0) return;
+          task(async ({ signal }) => {
+            batches.push(reqs.map((r) => r.id));
+            signals.push(signal);
+            await gate.promise;
+          });
+        }),
+    });
+    const db = build({}, { loadAll });
+    db.run(w.ops.openThread, { id: "r1", threadId: "t1" });
+    db.run(w.ops.openThread, { id: "r2", threadId: "t2" });
+    await flush();
+    await settle();
+    expect(batches).toEqual([["r1", "r2"]]); // one task for both rows
+
+    db.run(markDone, "r1"); // r1 leaves the query
+    await flush();
+    await settle();
+    expect(batches).toEqual([["r1", "r2"], ["r2"]]);
+    expect(signals[0]?.aborted).toBe(true);
+
+    db.run(markDone, "r2"); // the result is empty, so no task is registered
+    await flush();
+    await settle();
+    expect(batches).toHaveLength(2);
+    expect(signals[1]?.aborted).toBe(true);
+  });
+
+  it("lets a q.with task update rows in its result without restarting, via rerunOn", async () => {
+    const starts = vi.fn();
+    const gate = deferred<void>();
+    const loadAll = effect({
+      inputs: [w.tables.loadRequests],
+      watch: (q, task) =>
+        q.with(
+          pending(),
+          (reqs) => {
+            if (reqs.length === 0) return;
+            task(async ({ run }) => {
+              starts();
+              for (const r of reqs) run(setError, { id: r.id, error: "working" });
+              await gate.promise;
+            });
+          },
+          { rerunOn: ["threadId"] },
+        ),
+    });
+    const db = build({}, { loadAll });
+    db.run(w.ops.openThread, { id: "r1", threadId: "t1" });
+    await flush();
+    await settle();
+    await settle();
+    expect(starts).toHaveBeenCalledTimes(1); // updating `error` did not restart it
+
+    db.run(w.ops.openThread, { id: "r2", threadId: "t2" }); // a row entering always does
+    await flush();
+    await settle();
+    await settle();
+    expect(starts).toHaveBeenCalledTimes(2);
+  });
+
   it("aborts running tasks on db.dispose()", async () => {
     const gate = deferred<void>();
     let sig: AbortSignal | undefined;

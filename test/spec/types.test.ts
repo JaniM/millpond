@@ -80,6 +80,35 @@ spec("Types", () => {
     });
   });
 
+  it("q.each passes the previous row, and q.with passes the query's result", () => {
+    const { threads } = chatWorld().tables;
+    type Thread = { id: string; title: string; archived: boolean; lastMessageId: string | null };
+    aggregate({
+      table: table(z.object({ id: z.string() }), { key: "id" }),
+      inputs: [threads],
+      compute: (q, emit) => {
+        q.each(threads.all(), (t, prev) => {
+          expectTypeOf(prev).toEqualTypeOf<Thread | undefined>();
+          emit({ id: t.id });
+        });
+        const n = q.with(
+          threads.all(),
+          (ts) => {
+            expectTypeOf(ts).toEqualTypeOf<readonly Thread[]>();
+            return ts.length;
+          },
+          { rerunOn: ["title"] },
+        );
+        expectTypeOf(n).toEqualTypeOf<number>();
+        q.with(threads.get("t1"), (t) => {
+          expectTypeOf(t).toEqualTypeOf<Thread | undefined>();
+        });
+        // @ts-expect-error — not a field of the thread row
+        q.with(threads.all(), () => {}, { rerunOn: ["nope"] });
+      },
+    });
+  });
+
   it("tasks get a read-only db and write only through run", () => {
     expectTypeOf<TaskContext["db"]>().not.toHaveProperty("run");
     const { loadRequests } = chatWorld().tables;

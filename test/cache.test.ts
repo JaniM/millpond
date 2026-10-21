@@ -46,6 +46,49 @@ describe("query result cache", () => {
     db.dispose();
   });
 
+  it("holds a q.with query until its scope is disposed, passing a stable result", () => {
+    const t = table(z.object({ id: z.string(), group: z.string() }), {
+      key: "id",
+      indexes: { byGroup: ["group"] },
+    });
+    const results: unknown[] = [];
+    const agg = aggregate({
+      table: table(z.object({ id: z.string(), n: z.number() }), { key: "id" }),
+      inputs: [t],
+      compute: (q, emit) =>
+        q.each(t.byGroup.groupEq("parent"), (p) =>
+          emit({
+            id: p.id,
+            n: q.with(t.byGroup.groupEq(p.id), (rows) => {
+              results.push(rows);
+              return rows.length;
+            }),
+          }),
+        ),
+    });
+    const put = op((tx, r: { id: string; group: string }) => {
+      tx.upsert(t, r);
+    });
+    const del = op((tx, id: string) => {
+      tx.delete(t, id);
+    });
+    const db = createDb({ features: { f: feature({ tables: { t, agg }, ops: { put, del } }) } });
+    db.run(put, { id: "p", group: "parent" });
+    db.run(put, { id: "c", group: "p" });
+    expect(db.read(agg.get("p"))?.n).toBe(1);
+    expect(cachedQueryCount(db)).toBe(1);
+
+    db.run(put, { id: "p", group: "parent" }); // reruns the parent, and so its q.with
+    db.read(agg.all());
+    expect(results).toHaveLength(2);
+    expect(results[1]).toBe(results[0]); // the unchanged result kept its identity
+
+    db.run(del, "p");
+    expect(db.read(agg.all())).toHaveLength(0);
+    expect(cachedQueryCount(db)).toBe(0);
+    db.dispose();
+  });
+
   it("holds a subscribed query until its last subscriber leaves", () => {
     const { t, db } = world();
     const stopA = db.subscribe(t.all(), () => {});
