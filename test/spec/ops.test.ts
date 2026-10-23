@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { z } from "zod";
-import { op, table } from "../../src/index";
-import { type ChatWorld, chatWorld, expectThrows, flush, spec } from "./harness";
+import { createDb, feature, op, table } from "../../src/index";
+import { type ChatWorld, chatWorld, expectThrows, flush, spec, track } from "./harness";
 
 // Spec §"Ops". Every op run here is registered via `w.create({ ops })`, since
 // db.run with an unregistered op throws.
@@ -204,15 +204,31 @@ spec("Ops", () => {
   });
 
   describe("return values", () => {
-    it("db.run returns nothing (ops return nothing)", () => {
+    it("db.run returns what the op returns, once the op has committed", () => {
       const db = w.create();
-      db.run(w.ops.createThread, { id: "t1", title: "one" });
-      expect(
-        db.run(w.ops.send, { id: "m1", threadId: "t1", body: "a", sentAt: 1 }),
-      ).toBeUndefined();
+      expect(db.run(w.ops.createThread, { id: "t1", title: "one" })).toBeUndefined();
+      const id = db.run(w.ops.send, { id: "m1", threadId: "t1", body: "a", sentAt: 1 });
+      expect(id).toBe("m1");
+      expect(db.read(w.tables.messages.get(id))?.body).toBe("a");
+    });
+
+    it("tx.run returns what the nested op returns", () => {
+      const outer = op((tx) => {
+        tx.run(w.ops.createThread, { id: "t1", title: "one" });
+        return { nested: tx.run(w.ops.send, { id: "m1", threadId: "t1", body: "a", sentAt: 1 }) };
+      });
+      const db = w.create({ ops: { outer } });
+      expect(db.run(outer, undefined)).toEqual({ nested: "m1" });
+    });
+
+    it("db.ops returns what the op returns", () => {
+      const db = track(createDb({ features: { chat: feature({ tables: w.tables, ops: w.ops }) } }));
+      db.ops.chat.createThread({ id: "t1", title: "one" });
+      expect(db.ops.chat.send({ id: "m1", threadId: "t1", body: "a", sentAt: 1 })).toBe("m1");
     });
 
     it("throws when an op returns a promise, rolling back its writes", () => {
+      // @ts-expect-error — ops are synchronous, so the types reject an async op too
       const asyncOp = op(async (tx) => {
         tx.update(w.tables.threads, "t1", { title: "async" });
       });

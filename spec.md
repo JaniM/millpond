@@ -121,6 +121,7 @@ An op is a synchronous function of a transaction and its arguments. It commits a
 export const send = op((tx, m: { threadId: string; body: MessageBody }) => {
   const id = tx.insert(messages, { ...m, sentAt: Date.now(), editedAt: null });
   tx.update(threads, m.threadId, { lastMessageId: id });
+  return id;
 });
 
 export const archive = op((tx, { threadId }: { threadId: string }) => {
@@ -137,13 +138,13 @@ export const archive = op((tx, { threadId }: { threadId: string }) => {
 | `tx.upsert(table, row)` | Inserts or replaces, and returns the key | Validation fails |
 | `tx.delete(table, key)` | Deletes the row | The key is missing |
 | `tx.read(query)` | Reads, including the op's own writes | Only the shared cases below |
-| `tx.run(op, args)` | Runs another op inline as a savepoint | The nested op throws |
+| `tx.run(op, args)` | Runs another op inline as a savepoint, and returns its result | The nested op throws |
 
 Every call also throws when its table or op isn't registered, or when it writes to an aggregate table.
 
 - **Nested ops are savepoints.** If a nested op throws and the caller catches the error, only the nested op's writes are undone.
-- **Ops return nothing.** `insert` and `upsert` return keys so an op can link related rows. An op that returns a promise throws.
-- **Aggregates inside an op** reflect everything committed before the op started. They never include the op's own writes, which would mean rolling back aggregate state whenever the op throws.
+- **Ops return what their function returns.** `db.run`, `db.ops`, a task's `run` and `useOp`'s function hand the value back once the op has committed, and `tx.run` once the nested op has finished. A value only travels up from an op that succeeded, so it never carries rolled-back writes. Prefer returning keys to rows: a returned row is a snapshot, while a query stays current. An op that returns a promise is a type error, and throws if it gets past the types.
+- **Aggregates inside an op** reflect everything committed before the op started. They never include the op's own writes, which would mean rolling back aggregate state whenever the op throws. A value an op computes from an aggregate therefore misses the op's own writes; return a key instead, and let the caller read the aggregate, which is brought up to date first.
 - **Calling ops:** `db.ops.chat.send(args)` or `db.run(send, args)` from app code, `tx.run` inside ops, `run` inside effect tasks, and `useOp(send)` in React components.
 - **Where ops can't be called:** subscriber callbacks and aggregate compute functions. Both throw.
 
@@ -428,7 +429,7 @@ function Thread({ threadId }: { threadId: string }) {
 ```
 
 - **`useQuery`** is built on `useSyncExternalStore`. Because equal queries share a subscription and unchanged results keep the same array, a component can rebuild its query every render at no cost.
-- **`useOp(op)`** returns a function bound to the provider's db. Its types come from the op value, so components never import the assembled db.
+- **`useOp(op)`** returns a function bound to the provider's db, which runs the op and returns its result. Its types come from the op value, so components never import the assembled db.
 - **Other frameworks** will get bindings later, built on the same `subscribe` API.
 
 ## Worked example: loading a chat thread

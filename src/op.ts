@@ -18,27 +18,35 @@ export interface Tx {
   delete<Row, Key>(table: Table<Row, Key>, key: Key): void;
   /** Reads a query, including the op's own writes. */
   read<Row, Result>(query: Query<Row, Result>): Result;
-  /** Runs another op inline as a savepoint. */
-  run<Args>(op: Op<Args>, args: Args): void;
+  /** Runs another op inline as a savepoint, and returns what it returns. */
+  run<Args, Result>(op: Op<Args, Result>, args: Args): Result;
 }
 
 /**
  * An op is a synchronous function of a transaction and its arguments. It
- * commits all of its writes, or, if it throws, none of them.
+ * commits all of its writes, or, if it throws, none of them, and returns what
+ * its function returns.
  *
- * `Args` defaults to `unknown` so that bare `Op` is the supertype of every
- * op (used in `Record<string, Op>` constraints); the covariant phantom keeps
- * `Op<Specific>` assignable to it. `op()` below defaults an argument-free op to
- * `Op<void>`.
+ * `Args` and `Result` default to `unknown` so that bare `Op` is the supertype
+ * of every op (used in `Record<string, Op>` constraints); the covariant
+ * phantoms keep `Op<Specific>` assignable to it. `op()` below defaults an
+ * argument-free op to `Op<void>`.
  */
-export interface Op<Args = unknown> {
+export interface Op<Args = unknown, Result = unknown> {
   readonly kind: "op";
   /** Phantom args type; not present at runtime. */
   readonly __args?: Args;
+  /** Phantom result type; not present at runtime. */
+  readonly __result?: Result;
 }
 
-export function op<Args = void>(fn: (tx: Tx, args: Args) => void): Op<Args> {
+/** Ops are synchronous, so a promise result is a type error (and throws at runtime). */
+type Sync<Result> = Result extends PromiseLike<unknown> ? never : Result;
+
+export function op<Args = void, Result = void>(
+  fn: (tx: Tx, args: Args) => Sync<Result>,
+): Op<Args, Result> {
   if (typeof fn !== "function") throw new TypeError("millpond: op() expects a function.");
   const def: OpDef = { fn: fn as OpDef["fn"] };
-  return { kind: "op", [INTERNAL]: def } as Op<Args>;
+  return { kind: "op", [INTERNAL]: def } as Op<Args, Result>;
 }

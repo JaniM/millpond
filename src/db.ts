@@ -51,18 +51,19 @@ export interface AnyDb {
     query: Query<Row, Result>,
     listener: (result: Result) => void,
   ): Unsubscribe;
-  run<Args>(op: Op<Args>, args: Args): void;
+  run<Args, Result>(op: Op<Args, Result>, args: Args): Result;
   dispose(): void;
 }
 
-/** A bound op call: `(args) => void`, or `() => void` for an `Op<void>`. */
-// biome-ignore lint/suspicious/noConfusingVoidType: the `[void]` tuple is an exact-void check that distinguishes argument-free ops.
-export type OpFn<Args> = [Args] extends [void] ? () => void : (args: Args) => void;
+/** A bound op call: `(args) => Result`, or `() => Result` for an `Op<void>`. */
+export type OpFn<Args, Result = void> =
+  // biome-ignore lint/suspicious/noConfusingVoidType: the `[void]` tuple is an exact-void check that distinguishes argument-free ops.
+  [Args] extends [void] ? () => Result : (args: Args) => Result;
 
 /** The `db.ops.<feature>.<op>(args)` convenience tree, typed from the features. */
 export type OpsTree<Features extends Record<string, Feature>> = {
   [F in keyof Features]: Features[F] extends Feature<infer _Tables, infer Ops, infer _Effects>
-    ? { [K in keyof Ops]: Ops[K] extends Op<infer Args> ? OpFn<Args> : never }
+    ? { [K in keyof Ops]: Ops[K] extends Op<infer Args, infer Result> ? OpFn<Args, Result> : never }
     : never;
 };
 
@@ -518,7 +519,7 @@ class Engine implements ScopeHost {
 
   // --- Writes -------------------------------------------------------------------------
 
-  run<Args>(op: Op<Args>, args: Args): void {
+  run<Args, Result>(op: Op<Args, Result>, args: Args): Result {
     this.assertAlive();
     if (this.noWrite > 0) {
       throw new Error(
@@ -531,13 +532,15 @@ class Engine implements ScopeHost {
     const reg = this.opOf(op);
     const tx = new Tx(this);
     this.tx = tx;
+    let result: unknown;
     try {
-      tx.exec(reg, args);
+      result = tx.exec(reg, args);
     } finally {
       this.tx = undefined;
       tx.closed = true;
     }
     this.commit(tx.overlay);
+    return result as Result;
   }
 
   opOf(op: unknown): RegisteredOp {
@@ -714,7 +717,7 @@ class Engine implements ScopeHost {
       signal,
       run: (op: Op<unknown>, args: unknown, opts?: { ignoreAbort?: boolean }) => {
         if (signal.aborted && !opts?.ignoreAbort) throw abortError();
-        this.run(op, args);
+        return this.run(op, args);
       },
       note: (detail: string | null) => {
         if (record !== undefined) insp?.note(record, detail);
@@ -804,7 +807,7 @@ class Tx {
 
   constructor(private readonly engine: Engine) {}
 
-  exec(reg: RegisteredOp, args: unknown): void {
+  exec(reg: RegisteredOp, args: unknown): unknown {
     const mark = this.undo.length;
     try {
       const r = reg.def.fn(this, args);
@@ -812,6 +815,7 @@ class Tx {
         (r as Promise<unknown>).then(undefined, () => {});
         throw new Error(`millpond: op ${reg.name} returned a promise; ops must be synchronous.`);
       }
+      return r;
     } catch (e) {
       this.rollback(mark);
       throw e;
@@ -923,8 +927,8 @@ class Tx {
     return out;
   }
 
-  run(op: unknown, args: unknown): void {
+  run(op: unknown, args: unknown): unknown {
     this.assertOpen();
-    this.exec(this.engine.opOf(op), args);
+    return this.exec(this.engine.opOf(op), args);
   }
 }

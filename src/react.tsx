@@ -55,8 +55,8 @@ export function useQuery<Row, Result>(query: Query<Row, Result>): Result {
   return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
 }
 
-/** Returns a function, bound to the provider's db, that runs the op. */
-export function useOp<Args>(op: Op<Args>): OpFn<Args> {
+/** Returns a function, bound to the provider's db, that runs the op and returns its result. */
+export function useOp<Args, Result>(op: Op<Args, Result>): OpFn<Args, Result> {
   const db = useDb();
-  return useCallback((args?: Args) => db.run(op, args as Args), [db, op]) as OpFn<Args>;
+  return useCallback((args?: Args) => db.run(op, args as Args), [db, op]) as OpFn<Args, Result>;
 }

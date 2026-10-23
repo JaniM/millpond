@@ -1,4 +1,4 @@
-import { H as Query, a as OpFn, t as AnyDb, y as Op } from "./db-DNKX3s7g.mjs";
+import { H as Query, a as OpFn, t as AnyDb, y as Op } from "./db-BxuWRULz.mjs";
 import { ReactNode } from "react";
 //#region src/react.d.ts
 /** Provides the db to the tree. Place once at the root. */
@@ -14,7 +14,7 @@ export declare function useDb(): AnyDb;
  * the query every render is free.
  */
 export declare function useQuery<Row, Result>(query: Query<Row, Result>): Result;
-/** Returns a function, bound to the provider's db, that runs the op. */
-export declare function useOp<Args>(op: Op<Args>): OpFn<Args>;
+/** Returns a function, bound to the provider's db, that runs the op and returns its result. */
+export declare function useOp<Args, Result>(op: Op<Args, Result>): OpFn<Args, Result>;
 //#endregion
 //# sourceMappingURL=react.d.mts.map

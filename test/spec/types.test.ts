@@ -1,8 +1,18 @@
 import { expectTypeOf, it } from "vitest";
 import { z } from "zod";
-import { aggregate, count, effect, op, type TaskContext, table } from "../../src/index";
-import type { useOp } from "../../src/react";
-import { chatWorld, spec } from "./harness";
+import {
+  aggregate,
+  count,
+  createDb,
+  effect,
+  feature,
+  type Op,
+  op,
+  type TaskContext,
+  table,
+} from "../../src/index";
+import { useOp } from "../../src/react";
+import { chatWorld, spec, track } from "./harness";
 
 // The spec's type-level promises. These run like any spec test (and fail at
 // fixture construction until the engine lands), but their real assertions are
@@ -131,11 +141,48 @@ spec("Types", () => {
     const w = chatWorld();
     const db = w.create();
     type SendArgs = { id: string; threadId: string; body: string; sentAt: number };
-    expectTypeOf<ReturnType<typeof useOp<SendArgs>>>().toEqualTypeOf<(args: SendArgs) => void>();
+    expectTypeOf<ReturnType<typeof useOp<SendArgs, void>>>().toEqualTypeOf<
+      (args: SendArgs) => void
+    >();
     const call = () => {
       // @ts-expect-error — missing sentAt
       db.run(w.ops.send, { id: "m1", threadId: "t1", body: "hi" });
     };
     void call;
+  });
+
+  it("ops carry their result types to every call site", () => {
+    const { threads } = chatWorld().tables;
+    type ThreadArgs = { id: string; title: string };
+    const create = op((tx, t: ThreadArgs) =>
+      tx.insert(threads, { ...t, archived: false, lastMessageId: null }),
+    );
+    const touch = op(() => {});
+    expectTypeOf(create).toEqualTypeOf<Op<ThreadArgs, string>>();
+    expectTypeOf(touch).toEqualTypeOf<Op<void, void>>();
+
+    const db = track(
+      createDb({ features: { chat: feature({ tables: { threads }, ops: { create, touch } }) } }),
+    );
+    expectTypeOf(db.run(create, { id: "t1", title: "one" })).toEqualTypeOf<string>();
+    expectTypeOf(db.ops.chat.create).toEqualTypeOf<(args: ThreadArgs) => string>();
+    expectTypeOf(db.ops.chat.touch).toEqualTypeOf<() => void>();
+    const bind = () => useOp(create);
+    expectTypeOf<ReturnType<typeof bind>>().toEqualTypeOf<(args: ThreadArgs) => string>();
+    op((tx) => {
+      expectTypeOf(tx.run(create, { id: "t2", title: "two" })).toEqualTypeOf<string>();
+    });
+    effect({
+      inputs: [threads],
+      watch: (q, task) =>
+        q.each(threads.all(), (t) =>
+          task(({ run }) => {
+            expectTypeOf(run(create, t)).toEqualTypeOf<string>();
+          }),
+        ),
+    });
+
+    // @ts-expect-error — ops are synchronous, so an async op is a type error
+    op(async () => {});
   });
 });

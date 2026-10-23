@@ -8,8 +8,8 @@ import type { RowOf, Table } from "./table";
 export interface TaskContext {
   /** A read-only view of the latest committed state. */
   db: ReadonlyDb;
-  /** The only way to write from a task. */
-  run<Args>(op: Op<Args>, args: Args, options?: { ignoreAbort?: boolean }): void;
+  /** The only way to write from a task. Returns what the op returns. */
+  run<Args, Result>(op: Op<Args, Result>, args: Args, options?: { ignoreAbort?: boolean }): Result;
   /** Fires when the task is aborted. */
   signal: AbortSignal;
   /**

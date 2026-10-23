@@ -40,7 +40,7 @@ function useQuery(query) {
 	};
 	return (0, react.useSyncExternalStore)(subscribe, getSnapshot, getSnapshot);
 }
-/** Returns a function, bound to the provider's db, that runs the op. */
+/** Returns a function, bound to the provider's db, that runs the op and returns its result. */
 function useOp(op) {
 	const db = useDb();
 	return (0, react.useCallback)((args) => db.run(op, args), [db, op]);

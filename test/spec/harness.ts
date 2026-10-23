@@ -233,6 +233,7 @@ export function chatWorld() {
       editedAt: null,
     });
     tx.update(threads, m.threadId, { lastMessageId: id as string });
+    return id;
   });
 
   // Inserts only the message — for tests that must not touch `threads`.

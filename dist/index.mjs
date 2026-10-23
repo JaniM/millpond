@@ -1354,13 +1354,15 @@ var Engine = class {
 		const reg = this.opOf(op);
 		const tx = new Tx(this);
 		this.tx = tx;
+		let result;
 		try {
-			tx.exec(reg, args);
+			result = tx.exec(reg, args);
 		} finally {
 			this.tx = void 0;
 			tx.closed = true;
 		}
 		this.commit(tx.overlay);
+		return result;
 	}
 	opOf(op) {
 		const reg = typeof op === "object" && op !== null ? this.ops.get(op) : void 0;
@@ -1502,7 +1504,7 @@ var Engine = class {
 			signal,
 			run: (op, args, opts) => {
 				if (signal.aborted && !opts?.ignoreAbort) throw abortError();
-				this.run(op, args);
+				return this.run(op, args);
 			},
 			note: (detail) => {
 				if (record !== void 0) insp?.note(record, detail);
@@ -1590,6 +1592,7 @@ var Tx = class {
 				r.then(void 0, () => {});
 				throw new Error(`millpond: op ${reg.name} returned a promise; ops must be synchronous.`);
 			}
+			return r;
 		} catch (e) {
 			this.rollback(mark);
 			throw e;
@@ -1686,7 +1689,7 @@ var Tx = class {
 	}
 	run(op, args) {
 		this.assertOpen();
-		this.exec(this.engine.opOf(op), args);
+		return this.exec(this.engine.opOf(op), args);
 	}
 };
 //#endregion

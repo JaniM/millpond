@@ -101,6 +101,28 @@ spec("Effects and async tasks", () => {
     expect(db.read(w.tables.loadRequests.get("r1"))?.status).toBe("done");
   });
 
+  it("returns the op's result from a task's run", async () => {
+    let result: unknown;
+    const finish = op((tx, id: string) => {
+      tx.update(w.tables.loadRequests, id, { status: "done" });
+      return `${id} done`;
+    });
+    const loadThread = effect({
+      inputs: [w.tables.loadRequests],
+      watch: (q, task) =>
+        q.each(pending(), (req) =>
+          task(({ run }) => {
+            result = run(finish, req.id);
+          }),
+        ),
+    });
+    const db = build({ finish }, { loadThread });
+    db.run(w.ops.openThread, { id: "r1", threadId: "t1" });
+    await flush();
+    await settle();
+    expect(result).toBe("r1 done");
+  });
+
   it("aborts a task when its row leaves the query", async () => {
     const gate = deferred<void>();
     let abortedAfter = false;

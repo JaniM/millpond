@@ -6,8 +6,7 @@ import { expectDeliberate, expectThrows, flush, spec, track } from "./harness";
 // Spec §"Tables and schemas".
 
 // Build a one-table db with the given schema/options and generic write ops.
-// `lastKey()` exposes the key returned by the most recent `tx.insert`, since
-// ops themselves return nothing to the caller.
+// `insert` returns the key `tx.insert` returned.
 // Rows are loosely typed: these tests deliberately write rows the schema rejects.
 type LooseRow = Record<string, unknown>;
 type LooseTable = Table<LooseRow, unknown> & {
@@ -17,17 +16,14 @@ type LooseTable = Table<LooseRow, unknown> & {
 
 function bench(schema: z.ZodTypeAny, options: object, flags: object = {}) {
   const t = table(schema as never, options as never) as unknown as LooseTable;
-  let lastKey: unknown;
-  const insert = op((tx, row: unknown) => {
-    lastKey = tx.insert(t, row as never);
-  });
+  const insert = op((tx, row: unknown) => tx.insert(t, row as never));
   const update = op((tx, a: { key: unknown; patch: unknown }) => {
     tx.update(t, a.key, a.patch as never);
   });
   const db = track(
     createDb({ features: { f: feature({ tables: { t }, ops: { insert, update } }) }, ...flags }),
   );
-  return { t, insert, update, db, lastKey: () => lastKey };
+  return { t, insert, update, db };
 }
 
 /**
@@ -80,19 +76,17 @@ spec("Tables and schemas", () => {
   describe("key generator", () => {
     it("generates a key when the caller omits it, and insert returns that key", () => {
       let n = 0;
-      const { t, insert, db, lastKey } = bench(rowSchema, { key: "id", generate: () => `g${++n}` });
-      db.run(insert, { n: 1, flag: false, note: null });
-      expect(lastKey()).toBe("g1");
+      const { t, insert, db } = bench(rowSchema, { key: "id", generate: () => `g${++n}` });
+      expect(db.run(insert, { n: 1, flag: false, note: null })).toBe("g1");
       expect(db.read(t.get("g1"))?.n).toBe(1);
     });
 
     it("a caller-provided key always wins over the generator", () => {
-      const { t, insert, db, lastKey } = bench(rowSchema, {
+      const { t, insert, db } = bench(rowSchema, {
         key: "id",
         generate: () => "generated",
       });
-      db.run(insert, { id: "explicit", n: 1, flag: false, note: null });
-      expect(lastKey()).toBe("explicit");
+      expect(db.run(insert, { id: "explicit", n: 1, flag: false, note: null })).toBe("explicit");
       expect(db.read(t.get("explicit"))).toBeDefined();
       expect(db.read(t.get("generated"))).toBeUndefined();
     });

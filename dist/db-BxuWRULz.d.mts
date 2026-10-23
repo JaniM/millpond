@@ -161,34 +161,39 @@ interface Tx {
   delete<Row, Key>(table: Table<Row, Key>, key: Key): void;
   /** Reads a query, including the op's own writes. */
   read<Row, Result>(query: Query<Row, Result>): Result;
-  /** Runs another op inline as a savepoint. */
-  run<Args>(op: Op<Args>, args: Args): void;
+  /** Runs another op inline as a savepoint, and returns what it returns. */
+  run<Args, Result>(op: Op<Args, Result>, args: Args): Result;
 }
 /**
  * An op is a synchronous function of a transaction and its arguments. It
- * commits all of its writes, or, if it throws, none of them.
+ * commits all of its writes, or, if it throws, none of them, and returns what
+ * its function returns.
  *
- * `Args` defaults to `unknown` so that bare `Op` is the supertype of every
- * op (used in `Record<string, Op>` constraints); the covariant phantom keeps
- * `Op<Specific>` assignable to it. `op()` below defaults an argument-free op to
- * `Op<void>`.
+ * `Args` and `Result` default to `unknown` so that bare `Op` is the supertype
+ * of every op (used in `Record<string, Op>` constraints); the covariant
+ * phantoms keep `Op<Specific>` assignable to it. `op()` below defaults an
+ * argument-free op to `Op<void>`.
  */
-interface Op<Args = unknown> {
+interface Op<Args = unknown, Result = unknown> {
   readonly kind: "op";
   /** Phantom args type; not present at runtime. */
   readonly __args?: Args;
+  /** Phantom result type; not present at runtime. */
+  readonly __result?: Result;
 }
-declare function op<Args = void>(fn: (tx: Tx, args: Args) => void): Op<Args>;
+/** Ops are synchronous, so a promise result is a type error (and throws at runtime). */
+type Sync<Result> = Result extends PromiseLike<unknown> ? never : Result;
+declare function op<Args = void, Result = void>(fn: (tx: Tx, args: Args) => Sync<Result>): Op<Args, Result>;
 //#endregion
 //#region src/effect.d.ts
 /** The context a task runs in. It writes back only through `run`. */
 interface TaskContext {
   /** A read-only view of the latest committed state. */
   db: ReadonlyDb;
-  /** The only way to write from a task. */
-  run<Args>(op: Op<Args>, args: Args, options?: {
+  /** The only way to write from a task. Returns what the op returns. */
+  run<Args, Result>(op: Op<Args, Result>, args: Args, options?: {
     ignoreAbort?: boolean;
-  }): void;
+  }): Result;
   /** Fires when the task is aborted. */
   signal: AbortSignal;
   /**
@@ -256,13 +261,13 @@ type Unsubscribe = () => void;
 interface AnyDb {
   read<Row, Result>(query: Query<Row, Result>): Result;
   subscribe<Row, Result>(query: Query<Row, Result>, listener: (result: Result) => void): Unsubscribe;
-  run<Args>(op: Op<Args>, args: Args): void;
+  run<Args, Result>(op: Op<Args, Result>, args: Args): Result;
   dispose(): void;
 }
-/** A bound op call: `(args) => void`, or `() => void` for an `Op<void>`. */
-type OpFn<Args> = [Args] extends [void] ? () => void : (args: Args) => void;
+/** A bound op call: `(args) => Result`, or `() => Result` for an `Op<void>`. */
+type OpFn<Args, Result = void> = [Args] extends [void] ? () => Result : (args: Args) => Result;
 /** The `db.ops.<feature>.<op>(args)` convenience tree, typed from the features. */
-type OpsTree<Features extends Record<string, Feature>> = { [F in keyof Features]: Features[F] extends Feature<infer _Tables, infer Ops, infer _Effects> ? { [K in keyof Ops]: Ops[K] extends Op<infer Args> ? OpFn<Args> : never; } : never; };
+type OpsTree<Features extends Record<string, Feature>> = { [F in keyof Features]: Features[F] extends Feature<infer _Tables, infer Ops, infer _Effects> ? { [K in keyof Ops]: Ops[K] extends Op<infer Args, infer Result> ? OpFn<Args, Result> : never; } : never; };
 /** Passed to `onError`; `source` is the registered name of what failed. */
 interface ErrorInfo<Features extends Record<string, Feature> = Record<string, Feature>> {
   db: Db<Features>;
@@ -291,4 +296,4 @@ interface Db<Features extends Record<string, Feature> = Record<string, Feature>>
 declare function createDb<const Features extends Record<string, Feature>>(options: CreateDbOptions<Features>): Db<Features>;
 //#endregion
 export { Indexable as A, Schema as B, AggregateConfig as C, aggregate as D, ScopeOptions as E, TableFor as F, Query as H, TableOptions as I, TableQueries as L, InsertRow as M, RowOf as N, IndexColumns as O, Table as P, table as R, Aggregate as S, ScopeApi as T, Step as U, StandardSchemaV1 as V, TaskOptions as _, OpFn as a, Tx as b, Unsubscribe as c, FeatureConfig as d, feature as f, TaskContext as g, Task as h, ErrorInfo as i, IndexableKeys as j, IndexMap as k, createDb as l, EffectConfig as m, CreateDbOptions as n, OpsTree as o, Effect as p, Db as r, ReadonlyDb as s, AnyDb as t, Feature as u, effect as v, Reducer as w, op as x, Op as y, InferRow as z };
-//# sourceMappingURL=db-DNKX3s7g.d.cts.map
+//# sourceMappingURL=db-BxuWRULz.d.mts.map
